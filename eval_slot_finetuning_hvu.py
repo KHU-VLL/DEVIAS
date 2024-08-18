@@ -42,7 +42,7 @@ def get_args():
     parser.add_argument('--update_freq', default=1, type=int)
     parser.add_argument('--save_ckpt_freq', default=100, type=int)
     parser.add_argument('--anno_path', default=[], nargs='+', type=str,
-        help='Need 4 paths : seen action videos list, unseen action videos list, seen scene videos list, unseen scene videos list')
+        help='Need 2 paths : seen action-scene combination split list, unseen action-scene combination split list')
     
     #FG_mask
     parser.add_argument('--mask_model', default='', choices=['FAME','Segformer'], type=str)
@@ -276,7 +276,7 @@ def main(args, ds_init):
 
     #! hvu_eval
     dataset_list = build_dataset(is_train=False, test_mode=False, args=args) 
-    # dataset_seen_action, dataset_unseen_action, dataset_seen_scene, dataset_unseen_scene
+    # dataset_seen_split, dataset_unseen_split
     
     sampler_list = []
     for dataset in dataset_list:
@@ -359,8 +359,8 @@ def main(args, ds_init):
 
     validation_action(data_loader_val[0], model, device, header = 'Seen Action VAL:')
     validation_action(data_loader_val[1], model, device, header = 'Unseen Action VAL:')
-    validation_scene(data_loader_val[2], model, device, header = 'Seen Scene VAL:')
-    validation_scene(data_loader_val[3], model, device, header = 'Unseen Action VAL:')
+    validation_scene(data_loader_val[0], model, device, header = 'Seen Scene VAL:')
+    validation_scene(data_loader_val[1], model, device, header = 'Unseen Action VAL:')
 
    
 if __name__ == '__main__':

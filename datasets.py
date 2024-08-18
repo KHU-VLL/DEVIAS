@@ -465,12 +465,12 @@ def build_dataset(is_train, test_mode, args):
         
     elif args.data_set == 'HVU-EVAL':
         mode = 'validation'
-        seen_action_list, unseen_action_list, seen_scene_list, unseen_scene_list = args.anno_path
+        seen_comb_list, unseen_comb_list = args.anno_path
 
         data_path = os.path.join(args.data_prefix, 'val')
         dataset_lst = []
 
-        for anno_path in [seen_action_list, unseen_action_list, seen_scene_list, unseen_scene_list]:
+        for anno_path in [seen_comb_list, unseen_comb_list]:
             dataset_lst.append(VideoClsDataset_HVU(
                 anno_path=anno_path,
                 data_path=data_path,
