@@ -359,7 +359,9 @@ class VisionTransformer(nn.Module):
                  key_softmax=False,
                  disentangle_criterion=None,
                  no_label=False,
-                 num_scene_classes=365
+                 num_scene_classes=365,
+                 weights_tie=False,
+                 agg_depth=4
                  ):
         super().__init__()
         self.num_slots = num_latents
@@ -424,7 +426,8 @@ class VisionTransformer(nn.Module):
         self.fc_norm =  norm_layer(embed_dim)
         self.fc_dropout = nn.Dropout(p=fc_drop_rate) if fc_drop_rate > 0 else nn.Identity()
 
-        self.agg_block = AggregationBlock(num_latents=num_latents, key_softmax=key_softmax)
+        print(f"Aggregation blocks {weights_tie} depth {agg_depth}")
+        self.agg_block = AggregationBlock(num_latents=num_latents, key_softmax=key_softmax, weight_tie_layers=weights_tie, depth=agg_depth)
         
         self.mask_predictor = MaskPredictor()
 
