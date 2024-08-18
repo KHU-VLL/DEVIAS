@@ -16,17 +16,13 @@ from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
 import torch.distributed as dist
-from scipy.optimize import linear_sum_assignment
 
-from datasets import build_dataset,knn_build_dataset
+from datasets import build_dataset
 from engine_for_slot import train_one_epoch, validation_one_epoch, final_test, merge, final_test_with_scene_label
 from utils import NativeScalerWithGradNormCount as NativeScaler
 from utils import  multiple_samples_collate
 import utils
 import modeling_slot
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import random
 
 from train_loss import TrainLoss
@@ -62,7 +58,6 @@ def get_args():
     #DISENTANGLE
     parser.add_argument('--disentangle_criterion', default='', choices=['UNIFORM','ADVERSARIAL','GRL'], type=str)
     parser.add_argument('--attn_criterion', default='MSE', choices=['MSE','KL', 'CE'], type=str)
-    # adapter 쓸지 adapter 쓰면 adapter말고 vit는 다 freeze임 (aggregation은 제외)
     parser.add_argument('--use_adapter', action='store_true', default=False)
     parser.add_argument('--subset', action='store_true', default=False)
     #knn 할때 사용
@@ -70,8 +65,7 @@ def get_args():
         help='Number of NN to use. 20 is usually working the best.')
     
     # Aggregation parameters
-    # slot 개수
-    parser.add_argument('--num_latents', type=int, default= 4)
+    parser.add_argument('--num_latents', type=int, default= 4, help='num slots')
     # aggregation lr scale
     parser.add_argument('--agg_block_scale', type=float, default= 0.8)
 
@@ -80,18 +74,11 @@ def get_args():
     parser.add_argument('--model', default='slot_vit_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--tubelet_size', type=int, default= 2)
-    # aggregation에서 query softmax후 key도 softmax로 norm, defualt는 l1 norm임 
     parser.add_argument('--key_softmax', type=int, default=-1)
     parser.add_argument('--no_label', action='store_true', default=False)
     #scene, action head type
     parser.add_argument('--head_type', type=str, default= 'linear')
-    # slots를 어떻게 해서 fg,bg feature들을 만들거나.
-    # 1. hard_select 0을 fg 1을 bg로 할당
-    # 2. attention : TODO
-    # 3. weightedsum : weighted summation임
-    parser.add_argument('--fusion', type=str, default= 'hard_select',choices=['hard_select','attention', 'weightedsum','matching','matching_hard'])
-    # 어느 block 까지 얼릴거냐 11이면 all freeze, -1이면 full ft
-    parser.add_argument('--grad_from', type=int, default= 8)
+    parser.add_argument('--fusion', type=str, default= 'matching', choices=['hard_select', 'attention', 'weightedsum', 'matching', 'matching_hard'])
     parser.add_argument('--input_size', default=224, type=int,
                         help='videos input size')
 

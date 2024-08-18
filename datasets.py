@@ -12,6 +12,7 @@ import volume_transforms as volume_transforms
 
 import video_transforms as video_transforms 
 from hat_decode import VideoHATDataset
+from hvu import VideoClsDataset_HVU
 
 def is_directory_exists(path):
     return os.path.exists(path) and os.path.isdir(path)
@@ -423,6 +424,72 @@ def build_dataset(is_train, test_mode, args):
             args=args)
         nb_classes = 51
         
+        
+    elif args.data_set == 'HVU':
+        mode = None
+        anno_path = None
+        data_path = args.data_prefix
+        
+        if is_train is True:
+            mode = 'train'
+            anno_path = os.path.join(args.data_path, 'train.csv')
+            data_path = os.path.join(data_path, 'train')
+        elif test_mode is True:
+            mode = 'test'
+            anno_path = os.path.join(args.data_path, 'test.csv') 
+            data_path = os.path.join(data_path, 'val')
+        else:  
+            mode = 'validation'
+            anno_path = os.path.join(args.data_path, 'val.csv') 
+            data_path = os.path.join(data_path, 'val')
+
+
+        dataset = VideoClsDataset_HVU(
+            anno_path=anno_path,
+            data_path=data_path,
+            mode=mode,
+            clip_len=args.num_frames,
+            frame_sample_rate=args.sampling_rate,
+            num_segment=1,
+            test_num_segment=args.test_num_segment,
+            test_num_crop=args.test_num_crop,
+            num_crop=1 if not test_mode else 3,
+            keep_aspect_ratio=True,
+            crop_size=args.input_size,
+            short_side_size=args.short_side_size,
+            new_height=256,
+            new_width=320,
+            args=args)
+        
+        nb_classes = 400
+        
+    elif args.data_set == 'HVU-EVAL':
+        mode = 'validation'
+        seen_action_list, unseen_action_list, seen_scene_list, unseen_scene_list = args.anno_path
+
+        data_path = os.path.join(args.data_prefix, 'val')
+        dataset_lst = []
+
+        for anno_path in [seen_action_list, unseen_action_list, seen_scene_list, unseen_scene_list]:
+            dataset_lst.append(VideoClsDataset_HVU(
+                anno_path=anno_path,
+                data_path=data_path,
+                mode=mode,
+                clip_len=args.num_frames,
+                frame_sample_rate=args.sampling_rate,
+                num_segment=1,
+                test_num_segment=args.test_num_segment,
+                test_num_crop=args.test_num_crop,
+                num_crop=1 if not test_mode else 3,
+                keep_aspect_ratio=True,
+                crop_size=args.input_size,
+                short_side_size=args.short_side_size,
+                new_height=256,
+                new_width=320,
+                args=args))
+            
+        return dataset_lst
+
     else:
         raise NotImplementedError()
     

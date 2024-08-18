@@ -4,80 +4,169 @@ import numpy as np
 import time
 import torch
 import torch.backends.cudnn as cudnn
-import json
+import torch.nn.functional as F
+import torch.nn as nn
+import json,math
 import os
 from functools import partial
 from pathlib import Path
 from collections import OrderedDict
-import random
 
 from mixup import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
+from scipy.optimize import linear_sum_assignment
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+import torch.distributed as dist
 
 from datasets import build_dataset
-from engine_for_disentangle import train_one_epoch, validation_one_epoch, final_test, merge, final_test_with_scene_label
+from engine_for_slot_hvu import train_one_epoch, validation_one_epoch
 from utils import NativeScalerWithGradNormCount as NativeScaler
 from utils import  multiple_samples_collate
 import utils
-import modeling_disentangle
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.distributed as dist
+import modeling_slot
+import random
 
+from train_loss import TrainLoss
+from run_scuba import run_scuba
+from run_knn import run_knn
+
+from einops import reduce
+from fame_hvu import FAME
+
+
+HVU_NUM_ACTION_CLASSES = 739
+HVU_NUM_SCENE_CLASSES = 248
 
 class TrainLoss(nn.Module):
-    def __init__(self, 
-                 criterion:torch.nn.Module, logit_criterion:str, unified_head=False, num_action_classes=400, logit_criterion_weight=1.0
-):
+    """
+    https://github.com/facebookresearch/detr/blob/3af9fa878e73b6894ce3596450a8d9b89d918ca9/models/matcher.py#L12
+    """
+    def __init__(self,
+                 criterion:torch.nn.Module,scene_criterion:torch.nn.Module,num_action_classes:int,fusion='matching',combine=True,mask_prediction_loss_weight=1,mask_distill_loss_weight=3):
         super().__init__()
         self.criterion = criterion
-        self.logit_criterion = logit_criterion
-        self.logit_criterion_weight = logit_criterion_weight
-        self.unified_head = unified_head
-        self.num_action_classes = num_action_classes
+        self.scene_criterion = scene_criterion
+        self.num_action_classes = HVU_NUM_ACTION_CLASSES   #! for hvu
+        self.num_scene_classes = HVU_NUM_SCENE_CLASSES
+        self.fusion = fusion
+        self.combine = combine
+        self.mask_prediction_loss_weight = mask_prediction_loss_weight
+        self.mask_distill_loss_weight = mask_distill_loss_weight
+        print(f'mask_prediction_loss_weight : {self.mask_prediction_loss_weight}')
+        print(f'mask_distill_loss_weight : {self.mask_distill_loss_weight}')
 
-    def forward(self, student_output, teacher_outputs,target):
-        actions, scenes = student_output
-        action_token, action_logit = actions
-        scene_token, scene_logit = scenes
-        teacher_scene_token, teacher_scene_logit = teacher_outputs
+    def forward(self, model, student_output, action_targets, scene_targets, fg_mask=None):
+        #! implemented only for matching
+        # slot_action_head : (bs x num_slots) x action_classes
+        # slots_scene_head : (bs x num_slots) x scene_classes
+        (fg_feat, bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions) = student_output
+        device = slots_head.device
+        dtype = slots_head.dtype
+
+        bs = action_targets.shape[0]
+        target = action_targets
+        num_latent = int(slots_head.shape[0] / bs)
+        num_head = attn.size(0) // bs
+
+        # attn mean per head
+        attn = reduce(attn, '(bs num_head) num_latent dim -> bs num_latent dim', 'mean', num_head=num_head)
+        mask_predictions = mask_predictions.reshape(bs,num_latent, -1)
+
+        scene_target = scene_targets
+        scene_target += self.num_action_classes
         
-        if self.unified_head :
-            scene_target = torch.argmax(teacher_scene_logit, dim=1)
-            var = teacher_scene_logit.min() - float(1)
-            inf_tensor = torch.full((scene_target.size(0), self.num_action_classes), var, device=action_logit.device)
-            teacher_scene_logit = torch.cat([inf_tensor, teacher_scene_logit], dim=1)
-      
-        # 1. CLS loss
-        action_loss = self.criterion(action_logit, target)
+        # teacher_scene_logit = teacher_scene_logit.softmax(dim=-1)
+        slots_head_sfmax = slots_head.softmax(-1)
+        slots_action_head_sfmax = slots_head_sfmax[:,:self.num_action_classes]
+        slots_scene_head_sfmax = slots_head_sfmax[:,self.num_action_classes:self.num_action_classes+self.num_scene_classes]
+        all_indices = []
 
-        # 2. SCENE Logit distill loss
-        if self.logit_criterion == 'CE':
-            pseudo_labels = torch.argmax(teacher_scene_logit, dim=1)
-            logit_loss = F.cross_entropy(scene_logit, pseudo_labels)
+        for i in range(bs):
+            # Compute cost for each query for scene and action for the current image
+            cost_action_class = -slots_head_sfmax[i*num_latent:(i+1)*num_latent, target[i]]
+            cost_scene_class = -slots_head_sfmax[i*num_latent:(i+1)*num_latent, scene_target[i]]
             
-        elif self.logit_criterion == "KL":
-            logit_loss = F.kl_div(
-                F.log_softmax(scene_logit, dim=-1),
-                F.log_softmax(teacher_scene_logit, dim=-1),
-                reduction='batchmean',
-                log_target=True
-            ) 
+            # Concatenate the two costs
+            combined_cost = torch.cat([cost_action_class.unsqueeze(-1), cost_scene_class.unsqueeze(-1)], dim=1)
+            
+            # Use Hungarian algorithm on the combined cost
+            indices = linear_sum_assignment(combined_cost.detach().cpu())
+            all_indices.append(indices)
 
-        else:
-            raise NotImplementedError
+        # Convert the list of indices into the desired format
+        all_indices = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in all_indices]
+
+        action_loss = torch.tensor([0],device=device, dtype=dtype)
+        scene_loss = torch.tensor([0],device=device, dtype=dtype)
+        selected_slots = []
+        action_logit = []
+        slots_head = slots_head.view(bs,num_latent,-1)
+        fg_mask, fg_masks_per_frames = fg_mask
+        # fg_mask bs x 196
+        # fg_masks_per_frames bs x 1568
+        
+        fg_mask = fg_mask.half() if fg_mask.dtype != torch.float16 else fg_mask
+        fg_masks_per_frames = fg_masks_per_frames.half() if fg_masks_per_frames.dtype != torch.float16 else fg_masks_per_frames
+        
+        mask_prediction_loss = torch.tensor([0],device=device, dtype=dtype)
+        mask_distill_loss = torch.tensor([0],device=device, dtype=dtype)
+        
+        for batch_idx, (slot_indices, label_indices) in enumerate(all_indices):
+            for s_idx, l_idx in zip(slot_indices, label_indices):
+                if l_idx == 0:  # action
+                    mask_distill_loss += F.mse_loss(attn[batch_idx,s_idx], fg_masks_per_frames[batch_idx]) * self.mask_distill_loss_weight  # distill loss
+                    mask_prediction_loss += F.binary_cross_entropy_with_logits(  
+                        mask_predictions[batch_idx, s_idx],
+                        fg_mask[batch_idx]
+                    ) * self.mask_prediction_loss_weight
+                    action_loss += F.cross_entropy(slots_head[batch_idx, s_idx], target[batch_idx])
+                    action_logit.append(slots_head[batch_idx, s_idx])
+                    selected_slots.append((batch_idx, int(s_idx)))
+                elif l_idx == 1:  # scene
+                    if self.scene_criterion == "CE":
+                        scene_loss += F.cross_entropy(slots_head[batch_idx, s_idx], scene_target[batch_idx])
+                    
+                    elif self.scene_criterion == "KL":
+                        logit = slots_head[batch_idx, s_idx]
+                        target_index = scene_target[batch_idx]
+                        log_prob = F.log_softmax(logit.unsqueeze(0), dim=1)  
+                        _scene_target = torch.zeros_like(log_prob).scatter_(1, target_index.view(1, 1), 1)
+                        scene_loss += F.kl_div(log_prob, _scene_target, reduction='batchmean')
+                        
+                    selected_slots.append((batch_idx, int(s_idx)))
+
+        action_loss /= bs
+        scene_loss /= bs
+        mask_prediction_loss /= bs
+        mask_distill_loss /= bs
+            
+        slots = slots.reshape(bs,num_latent, -1)
+        
+        normed_slots = F.normalize(slots, p=2, dim=2)
+
+        cosine_sim_matrix = torch.bmm(normed_slots, normed_slots.transpose(1, 2))
+
+        identity = torch.eye(cosine_sim_matrix.size(1)).to(cosine_sim_matrix.device)
+        cosine_sim_matrix = cosine_sim_matrix * (1 - identity)
+
+        cosine_loss = (cosine_sim_matrix.sum(dim=(1,2)) / (cosine_sim_matrix.size(1) * (cosine_sim_matrix.size(1) - 1))).mean()
+
+        total_loss = action_loss + scene_loss + cosine_loss + mask_prediction_loss + mask_distill_loss
+        return total_loss, \
+            torch.stack(action_logit),\
+            {'action_loss':action_loss.item(),
+            'scene_loss':scene_loss.item(),
+            'cosine_loss':cosine_loss.item(),
+            'mask_prediction_loss':mask_prediction_loss.item(),
+            'mask_distill_loss':mask_distill_loss.item()}
 
 
-        total_loss = action_loss + logit_loss * self.logit_criterion_weight 
-        return  total_loss, \
-                action_logit, \
-                {'action_loss':action_loss.item(),
-                 'logit_loss':logit_loss.item()}
-
-
+def print_requires_grad_parameters(model):
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(name)
 
 def get_args():
     parser = argparse.ArgumentParser('VideoMAE fine-tuning and evaluation script for video classification', add_help=False)
@@ -87,21 +176,44 @@ def get_args():
     parser.add_argument('--save_ckpt_freq', default=100, type=int)
     parser.add_argument('--run_knn', action='store_true', default=False)
     parser.add_argument('--run_scuba', action='store_true', default=False)
-    parser.add_argument('--hat_eval', action='store_true', default=False)
-    parser.add_argument('--anno_path', default="", type=str)
     parser.add_argument('--scene_model_path', default="", type=str)
 
-    #DISENTANGLE
-    parser.add_argument('--logit_criterion', default='CE', choices=['MSE','KL', 'CE'], type=str)
+    #FG_mask
+    parser.add_argument('--mask_model', default='', choices=['FAME','Segformer'], type=str)
+    parser.add_argument('--beta', type=float, default= 0.5,help='FAME foreground region ratio.')
+    parser.add_argument('--prob_aug', type=float, default= 0.5)
+    parser.add_argument('--mask_distill_loss_weight', type=float, default= 1)
+    parser.add_argument('--mask_prediction_loss_weight', type=float, default= 3)
 
-    parser.add_argument('--logit_criterion_weight', type=float, default= 1.0)
-    parser.add_argument('--unified_head', action='store_true')
-    parser.set_defaults(unified_head=False)
+    #DISENTANGLE
+    parser.add_argument('--disentangle_criterion', default='', choices=['UNIFORM','ADVERSARIAL','GRL'], type=str)
+    parser.add_argument('--attn_criterion', default='MSE', choices=['MSE','KL', 'CE'], type=str)
+    parser.add_argument('--scene_criterion', default='KL', choices=['KL', 'CE'], type=str)
+    
+    parser.add_argument('--use_adapter', action='store_true', default=False)
+    parser.add_argument('--subset', action='store_true', default=False)
+    #knn 할때 사용
+    parser.add_argument('--nb_knn', default=[10, 20], nargs='+', type=int,
+        help='Number of NN to use. 20 is usually working the best.')
+    
+    # Aggregation parameters
+    parser.add_argument('--num_latents', type=int, default= 4)
+    parser.add_argument('--weights_tie', default=False, action='store_true')
+    parser.add_argument('--agg_depth', type=int, default= 4)
+    # aggregation lr scale
+    parser.add_argument('--agg_block_scale', type=float, default= 0.8)
+
     
     # Model parameters
-    parser.add_argument('--model', default='vit_base_patch16_224', type=str, metavar='MODEL',
+    parser.add_argument('--model', default='slot_vit_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--tubelet_size', type=int, default= 2)
+    # aggregation에서 query softmax후 key도 softmax로 norm, defualt는 l1 norm임 
+    parser.add_argument('--key_softmax', type=int, default=-1)
+    parser.add_argument('--no_label', action='store_true', default=False)
+    #scene, action head type
+    parser.add_argument('--head_type', type=str, default= 'linear')
+    parser.add_argument('--fusion', type=str, default='matching',choices=['hard_select','attention', 'weightedsum','matching','matching_hard'])
     parser.add_argument('--input_size', default=224, type=int,
                         help='videos input size')
 
@@ -114,6 +226,7 @@ def get_args():
     parser.add_argument('--drop_path', type=float, default=0.1, metavar='PCT',
                         help='Drop path rate (default: 0.1)')
     parser.add_argument('--slicing', action='store_true', default=False)
+    parser.add_argument('--residual', action='store_true', default=False)
     parser.add_argument('--disable_eval_during_finetuning', action='store_true', default=False)
     parser.add_argument('--model_ema', action='store_true', default=False)
     parser.add_argument('--model_ema_decay', type=float, default=0.9999, help='')
@@ -206,7 +319,7 @@ def get_args():
     # Dataset parameters
     parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
                         help='dataset path')
-    parser.add_argument('--data_prefix', default='/data2/local_datasets/Kinetics-400', type=str)
+    parser.add_argument('--data_prefix', default='', type=str)
     parser.add_argument('--eval_data_path', default=None, type=str,
                         help='dataset path for evaluation')
     parser.add_argument('--nb_classes', default=400, type=int,
@@ -215,9 +328,10 @@ def get_args():
     parser.add_argument('--num_segments', type=int, default= 1)
     parser.add_argument('--num_frames', type=int, default= 16)
     parser.add_argument('--sampling_rate', type=int, default= 4)
-    parser.add_argument('--data_set', default='Kinetics-400', choices=['Diving-48', 'Kinetics-400', "UCF101-HAT", "Kinetics-HAT", 'SSV2', 'UCF101', 'HMDB51', 'image_folder'],
+    parser.add_argument('--data_set', default='HVU', choices=['HVU', 'Diving-48','Kinetics-400', 'SSV2', 'UCF101', 'HMDB51','image_folder'],
                         type=str, help='dataset')
     parser.add_argument('--hat_split', default='1', choices=['1', '2', '3'], type=str)
+    parser.add_argument('--hat_eval', action='store_true', help='test on HAT three splits at once')
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--log_dir', default=None,
@@ -246,18 +360,17 @@ def get_args():
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
     parser.set_defaults(pin_mem=True)
-    parser.add_argument('--nb_knn', default=[10, 20], nargs='+', type=int,
-        help='Number of NN to use. 20 is usually working the best.')
+
     # distributed training parameters
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--local-rank', default=-1, type=int)
+    parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
 
     parser.add_argument('--enable_deepspeed', action='store_true', default=False)
-    parser.add_argument('--eval_scene', action='store_true', default=False)
 
     known_args, _ = parser.parse_known_args()
 
@@ -293,6 +406,7 @@ def main(args, ds_init):
     random.seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
+
     cudnn.benchmark = True
 
     dataset_train, args.nb_classes = build_dataset(is_train=True, test_mode=False, args=args)
@@ -363,6 +477,7 @@ def main(args, ds_init):
     else:
         data_loader_test = None
 
+
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
@@ -371,11 +486,13 @@ def main(args, ds_init):
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
+    
+    
 
     model = create_model(
         args.model,
         pretrained=False,
-        num_classes=args.nb_classes,
+        num_classes=HVU_NUM_ACTION_CLASSES,
         all_frames=args.num_frames * args.num_segments,
         tubelet_size=args.tubelet_size,
         fc_drop_rate=args.fc_drop_rate,
@@ -385,35 +502,30 @@ def main(args, ds_init):
         drop_block_rate=None,
         use_checkpoint=args.use_checkpoint,
         init_scale=args.init_scale,
-        slicing=args.slicing,
-        unified_head=args.unified_head
-    )
-    
-    scene_model =  create_model(
-        'vit_base_patch16_224',
-        pretrained=False,
-        num_classes=365,
-        all_frames=args.num_frames * args.num_segments,
-        tubelet_size=args.tubelet_size,
-        fc_drop_rate=args.fc_drop_rate,
-        drop_rate=args.drop,
-        drop_path_rate=args.drop_path,
-        attn_drop_rate=args.attn_drop_rate,
-        drop_block_rate=None,
-        use_checkpoint=args.use_checkpoint,
-        use_mean_pooling=False,
-        init_scale=args.init_scale,
+        num_latents=args.num_latents,
+        residual = args.residual,
+        head_type=args.head_type,
+        fusion=args.fusion,
+        disentangle_criterion=args.disentangle_criterion,
+        weights_tie=args.weights_tie,
+        agg_depth=args.agg_depth,
+        num_scene_classes=HVU_NUM_SCENE_CLASSES
     )
     
 
-    scene_path = args.scene_model_path
-    weight = torch.load(scene_path, map_location='cpu')['model']
+    print("Turning parameters")
+    print_requires_grad_parameters(model)
 
-    msg = scene_model.load_state_dict(weight)
-    print(f'scene model load weight msg : {msg}')
-    
-    for param in scene_model.parameters():
-        param.requires_grad = False
+    if args.mask_model =="FAME":
+        mask_model = FAME(beta=args.beta, prob_aug=args.prob_aug)
+        
+    elif args.mask_model =="Segformer":
+        from transformers import SegformerForSemanticSegmentation
+        mask_model = SegformerForSemanticSegmentation.from_pretrained("nvidia/segformer-b3-finetuned-cityscapes-1024-1024")
+        mask_model = mask_model.cuda().half()
+        mask_model.eval()
+    else:
+        raise ValueError('mask model Error')
 
     patch_size = model.patch_embed.patch_size
     print("Patch size = %s" % str(patch_size))
@@ -484,7 +596,6 @@ def main(args, ds_init):
         utils.load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
 
     model.to(device)
-    scene_model.to(device)
 
     model_ema = None
     if args.model_ema:
@@ -496,11 +607,9 @@ def main(args, ds_init):
         print("Using EMA with decay = %.8f" % args.model_ema_decay)
 
     model_without_ddp = model
-    scene_model_ddp =scene_model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print("Model = %s" % str(model_without_ddp))
-    print("Scene Model = %s" % str(scene_model_ddp))
     print('number of params:', n_parameters)
 
     total_batch_size = args.batch_size * args.update_freq * utils.get_world_size()
@@ -531,15 +640,16 @@ def main(args, ds_init):
         optimizer_params = get_parameter_groups(
             model, args.weight_decay, skip_weight_decay_list,
             assigner.get_layer_id if assigner is not None else None,
-            assigner.get_scale if assigner is not None else None)
+            assigner.get_scale if assigner is not None else None,
+            agg_block_scale = args.agg_block_scale
+            )
         model, optimizer, _, _ = ds_init(
             args=args, model=model, model_parameters=optimizer_params, dist_init_required=not args.distributed,
         )
         print("model.gradient_accumulation_steps() = %d" % model.gradient_accumulation_steps())
         assert model.gradient_accumulation_steps() == args.update_freq
-        scene_model, _, _, _ = ds_init(
-    args=args, model=scene_model, dist_init_required=not args.distributed
-)
+
+        
     else:
         if args.distributed:
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
@@ -570,59 +680,21 @@ def main(args, ds_init):
     else:
         criterion = torch.nn.CrossEntropyLoss()
 
-    train_criterion = TrainLoss(
-                        criterion = criterion,
-                        logit_criterion = args.logit_criterion,
-                        logit_criterion_weight = args.logit_criterion_weight,
-                        unified_head=args.unified_head, num_action_classes=args.nb_classes
-    )
 
-    print("criterion = %s" % str(criterion))
-    print("logit_criterion = %s" % str(args.logit_criterion))
+    train_criterion = TrainLoss(
+            criterion = criterion,
+            scene_criterion=args.scene_criterion,
+            num_action_classes=args.nb_classes,
+            fusion=args.fusion,
+            mask_prediction_loss_weight=args.mask_prediction_loss_weight,
+            mask_distill_loss_weight=args.mask_distill_loss_weight
+    )
 
     utils.auto_load_model(
         args=args, model=model, model_without_ddp=model_without_ddp,
         optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
 
-    if args.hat_eval :
-        from hat_eval import hat_eval
-        if args.eval_scene :
-            print('usebglabel'*10)
-            hat_eval(args, model, final_test_with_scene_label, merge, scene_model=scene_model)
-        else :
-            hat_eval(args, model, final_test, merge)
-        exit(0)
-        
-    if args.run_scuba :
-        from run_scuba import run_scuba
-        run_scuba(model, args, final_test, merge, final_test_with_scene_label, scene_model)
-        exit(0)
 
-    if args.eval:
-        preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
-        if args.eval_scene :
-            print('usebglabel'*10)
-            test_stats = final_test_with_scene_label(data_loader_test, model, scene_model, device, preds_file, num_labels=args.nb_classes)
-        else :        
-            test_stats = final_test(data_loader_test, model, device, preds_file)
-        torch.distributed.barrier()
-        if global_rank == 0:
-            print("Start merging results...")
-            final_top1 ,final_top5 = merge(args.output_dir, num_tasks)
-            print(f"Accuracy of the network on the {len(dataset_test)} test videos: Top-1: {final_top1:.2f}%, Top-5: {final_top5:.2f}%")
-            log_stats = {'Final top-1': final_top1,
-                        'Final Top-5': final_top5}
-            if args.output_dir and utils.is_main_process():
-                with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-                    f.write(json.dumps(log_stats) + "\n")
-        exit(0)
-        
-    if args.run_knn:
-        model = model.float()
-        from run_knn import run_knn
-        run_knn(model,args)
-        exit(0)
-        
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     max_accuracy = 0.0
@@ -631,34 +703,30 @@ def main(args, ds_init):
             data_loader_train.sampler.set_epoch(epoch)
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch * args.update_freq)
-
         train_stats = train_one_epoch(
-                model,scene_model, train_criterion, data_loader_train, optimizer,
-                device, epoch, loss_scaler, args.clip_grad, model_ema, mixup_fn,
-                log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
-                lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
-                num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
-            )
+            model, train_criterion, data_loader_train, optimizer,
+            device, epoch, loss_scaler, args.clip_grad, model_ema, mixup_fn,
+            log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
+            lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
+            num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
+            mask_model=mask_model,args=args
+        )
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
                 utils.save_model(
                     args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                     loss_scaler=loss_scaler, epoch=epoch, model_ema=model_ema)
         if data_loader_val is not None:
-            test_stats = validation_one_epoch(data_loader_val, model, device)
-            print(f"Accuracy of the network on the {len(dataset_val)} val videos: {test_stats['acc1']:.1f}%")
-            if max_accuracy < test_stats["acc1"]:
-                max_accuracy = test_stats["acc1"]
+            test_stats = validation_one_epoch(data_loader_val, model, device,args)
+            print(f"Accuracy of the network on the {len(dataset_val)} val videos: {test_stats['action_acc1']:.1f}%")
+            if max_accuracy < test_stats["action_acc1"]:
+                max_accuracy = test_stats["action_acc1"]
                 if args.output_dir and args.save_ckpt:
                     utils.save_model(
                         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                         loss_scaler=loss_scaler, epoch="best", model_ema=model_ema)
 
             print(f'Max accuracy: {max_accuracy:.2f}%')
-            if log_writer is not None:
-                log_writer.update(val_acc1=test_stats['acc1'], head="perf", step=epoch)
-                log_writer.update(val_acc5=test_stats['acc5'], head="perf", step=epoch)
-                log_writer.update(val_loss=test_stats['loss'], head="perf", step=epoch)
 
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          **{f'val_{k}': v for k, v in test_stats.items()},
@@ -675,27 +743,12 @@ def main(args, ds_init):
                 f.write(json.dumps(log_stats) + "\n")
 
     preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
-    test_stats = final_test(data_loader_test, model, device, preds_file)
-    torch.distributed.barrier()
-    if global_rank == 0:
-        print("Start merging results...")
-        final_top1 ,final_top5 = merge(args.output_dir, num_tasks)
-        print(f"Accuracy of the network on the {len(dataset_test)} test videos: Top-1: {final_top1:.2f}%, Top-5: {final_top5:.2f}%")
-        log_stats = {'Final top-1': final_top1,
-                    'Final Top-5': final_top5}
-        if args.output_dir and utils.is_main_process():
-            with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-                f.write(json.dumps(log_stats) + "\n")
-                
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    
-
     print('Training time {}'.format(total_time_str))
-    model = model.float()
-    # run_knn(model,args)
+    torch.distributed.barrier()
 
-    
+   
 if __name__ == '__main__':
     opts, ds_init = get_args()
     if opts.output_dir:
