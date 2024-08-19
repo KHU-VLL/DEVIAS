@@ -23,6 +23,7 @@ from utils import NativeScalerWithGradNormCount as NativeScaler
 from utils import  multiple_samples_collate
 import utils
 import modeling_slot
+import modeling_finetune
 import random
 
 from train_loss import TrainLoss
@@ -58,6 +59,7 @@ def get_args():
     #DISENTANGLE
     parser.add_argument('--disentangle_criterion', default='', choices=['UNIFORM','ADVERSARIAL','GRL'], type=str)
     parser.add_argument('--attn_criterion', default='MSE', choices=['MSE','KL', 'CE'], type=str)
+    parser.add_argument('--scene_criterion', default='KL', choices=['KL', 'CE'], type=str)
     parser.add_argument('--use_adapter', action='store_true', default=False)
     parser.add_argument('--subset', action='store_true', default=False)
     #knn 할때 사용
@@ -604,6 +606,7 @@ def main(args, ds_init):
 
     train_criterion = TrainLoss(
             criterion = criterion,
+            scene_criterion=args.scene_criterion,
             num_action_classes=args.nb_classes,
             fusion=args.fusion,
             mask_prediction_loss_weight=args.mask_prediction_loss_weight,

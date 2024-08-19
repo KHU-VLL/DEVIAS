@@ -23,6 +23,7 @@ from utils import NativeScalerWithGradNormCount as NativeScaler
 from utils import  multiple_samples_collate
 import utils
 import modeling_disentangle
+import modeling_finetune
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist

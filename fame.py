@@ -144,8 +144,8 @@ class FAME(nn.Module):
         reshaped_data = pooled_data.view(batch_size, -1)
         mask = reshaped_data.to(label.device, non_blocking=True)
         
-        # pooled_data = F.avg_pool2d(masks_per_frame.squeeze(2), kernel_size=16, stride=16)
-        pooled_data = F.avg_pool2d(masks_per_frame.squeeze(2), kernel_size=32, stride=32)
+        pooled_data = F.avg_pool2d(masks_per_frame.squeeze(2), kernel_size=16, stride=16)
+        # pooled_data = F.avg_pool2d(masks_per_frame.squeeze(2), kernel_size=32, stride=32)
         reshaped_data = pooled_data.view(batch_size, -1)
         masks_per_frame = reshaped_data.to(label.device, non_blocking=True)
         

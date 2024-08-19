@@ -256,12 +256,10 @@ def validation_one_epoch(data_loader, model, device,args):
         
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} MultiSlotAcc {multi_slot_acc.global_avg:.3f} loss {losses.global_avg:.3f} Sum_Acc@1 {sum_acc1.global_avg:.3f} Sum_Acc@5 {sum_acc5.global_avg:.3f} logit_Acc@1 {unnorm_acc1.global_avg:.3f} logit_Acc@5 {unnorm_acc5.global_avg:.3f}'
+    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} MultiSlotAcc {multi_slot_acc.global_avg:.3f} loss {losses.global_avg:.3f}'
         .format(top1=metric_logger.acc1, top5=metric_logger.acc5,
                 multi_slot_acc=metric_logger.multi_slot_acc, 
                 losses=metric_logger.loss,
-                sum_acc1=metric_logger.sum_acc1, sum_acc5=metric_logger.sum_acc5,
-                unnorm_acc1=metric_logger.unnorm_acc1, unnorm_acc5=metric_logger.unnorm_acc5,
                 ))
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

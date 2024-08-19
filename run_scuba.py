@@ -19,7 +19,8 @@ def run_scuba(model, args, test_func, merge_func, test_scene_func=None, scene_mo
     args.test_num_segment, args.test_num_crop = 2, 3
     
     model.eval()
-    scene_model.eval()
+    if scene_model is not None :
+        scene_model.eval()
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
     device = model.device
