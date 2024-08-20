@@ -6,7 +6,7 @@ This repository is the official implementation of the paper **"DEVIAS: Learning 
 
 ## News
 - We are diligently preparing the code and are excited to share it with you soon. Stay tuned for the release soon!
-- 
+  
 ## Installation
 
 _coming soon_
