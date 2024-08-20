@@ -13,7 +13,14 @@ _coming soon_
 
 ## Dataset
 
-_coming soon_
+The following datasets are used in this project. You can download them via the provided links.
+
+1. **[Kinetics-400](https://opendatalab.com/OpenMMLab/Kinetics-400)** , **[UCF-101](https://www.crcv.ucf.edu/data/UCF101.php)** , **[HVU](https://github.com/holistic-video-understanding/HVU-Downloader)**
+2. **[HAT(Neurips2022)](https://github.com/princetonvisualai/HAT)**, **[SCUBA (ICCV2023)](https://github.com/lihaoxin05/StillMix)**
+3. **[Something-Something V2](https://developer.qualcomm.com/software/ai-datasets/something-something)**, **[ActivityNet](http://activity-net.org/download.html)**, **[Diving48](http://www.svcl.ucsd.edu/projects/resound/dataset.html)**
+
+Please download the datasets to replicate the results of this project.
+
 ## Training
 
 _coming soon_
@@ -21,8 +28,6 @@ _coming soon_
 
 _coming soon_
 ## Acknowledgement
-
-
 This codebase was built upon the work of [VideoMAE](https://github.com/MCG-NJU/VideoMAE) and [DivE](https://github.com/kdwonn/DivE). We appreciate their contributions to the original code.
 ## Citation
 
