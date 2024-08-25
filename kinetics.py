@@ -61,7 +61,7 @@ class VideoClsDataset(Dataset):
             self.label_array = list(cleaned.values[:, 2])
         elif self.args.data_set in ['Kinetics-BG'] :
             cleaned = pd.read_csv(self.anno_path, header=None, delimiter=' ')
-            self.dataset_samples = [os.path.join(self.data_path, 'inpaint', i) for i in cleaned.values[:, 0]]
+            self.dataset_samples = [os.path.join(self.data_path, 'inpaint/videos', i) for i in cleaned.values[:, 0]]
             self.dataset_masks = [os.path.join(self.data_path, 'seg', i) for i in cleaned.values[:, 0]]
             self.video_len_array = list(cleaned.values[:, 1])
             self.label_array = list(cleaned.values[:, 2])
@@ -210,7 +210,7 @@ class VideoClsDataset(Dataset):
             elif self.args.data_set in ['UCF101-BG', 'Kinetics-BG'] :
                 masks = self.test_dataset_masks[index]
                 video_len = self.test_video_len_array[index]
-                buffer = self.loadvideo_bg_frame(sample, video_len, masks) 
+                buffer = self.loadvideo_bg_frame(sample, video_len) 
 
             else :
                 buffer = self.loadvideo_decord(sample)  #! buffer == (len, h, w, c)
