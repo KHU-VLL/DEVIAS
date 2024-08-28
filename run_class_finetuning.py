@@ -150,9 +150,7 @@ def get_args():
     
     parser.add_argument('--hat_eval', action='store_true')
     parser.add_argument('--hat_split', default='1', choices=['1', '2', '3'], type=str)
-
-    parser.add_argument('--eval_data_path', default=None, type=str,
-                        help='dataset path for evaluation')
+    parser.add_argument('--hat_anno_path', default=None, type=str)
     parser.add_argument('--nb_classes', default=400, type=int,
                         help='number of the classification types')
     parser.add_argument('--imagenet_default_mean_and_std', default=True, action='store_true')
@@ -449,7 +447,9 @@ def main(args, ds_init):
         optimizer_params = get_parameter_groups(
             model, args.weight_decay, skip_weight_decay_list,
             assigner.get_layer_id if assigner is not None else None,
-            assigner.get_scale if assigner is not None else None)
+            assigner.get_scale if assigner is not None else None,
+            agg_block_scale = args.agg_block_scale
+            )
         model, optimizer, _, _ = ds_init(
             args=args, model=model, model_parameters=optimizer_params, dist_init_required=not args.distributed,
         )

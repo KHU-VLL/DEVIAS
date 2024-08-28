@@ -38,7 +38,7 @@ class MLPHead(nn.Module):
         self.fc_fg_ln = nn.LayerNorm(in_dim // 2)
         self.fc_bg_ln = nn.LayerNorm(in_dim // 2)
         
-        self.fc_input_ln = nn.LayerNorm(in_dim)
+        # self.fc_input_ln = nn.LayerNorm(in_dim)
 
         self.classifier = nn.Linear(in_dim, out_dim)
         
@@ -52,7 +52,8 @@ class MLPHead(nn.Module):
         
         output = torch.concat([fg_token, bg_token], dim=1)
         
-        output = self.classifier(self.fc_dropout(self.relu(self.fc_input_ln(output))))
+        # output = self.classifier(self.fc_dropout(self.relu(self.fc_input_ln(output))))
+        output = self.classifier(self.fc_dropout(self.relu(output)))
 
         return output
 
@@ -284,27 +285,19 @@ class VisionTransformer(nn.Module):
                  use_checkpoint=False,
                  use_mean_pooling=True,
                  num_latents=4,
-                 residual=False,
                  head_type='linear',
-                 fusion='hard_select',
-                 use_adapter=False,
-                 key_softmax=False,
-                 disentangle_criterion=None,
-                 no_label=False,
-                 weight_tie_layers=True,
+                 agg_weights_tie=True,
                  agg_depth=4,
                  num_scene_classes=365,
                  slot_fusion='concat',
-                 downstream_num_classes=50
+                 downstream_nb_classes=50
                  ):
         super().__init__()
         self.num_slots = num_latents
         self.num_classes = num_classes
         self.num_scene_classes = num_scene_classes
         
-        self.residual = residual
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-        self.disentangle_criterion = disentangle_criterion
         self.tubelet_size = tubelet_size
         self.patch_embed = PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
@@ -315,7 +308,6 @@ class VisionTransformer(nn.Module):
             trunc_normal_(self.cls_token, std=.02)
             num_patches += 1
         self.slot_fusion = slot_fusion
-        self.fusion = fusion
 
         if use_learnable_pos_emb:
             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
@@ -336,12 +328,10 @@ class VisionTransformer(nn.Module):
         self.norm = norm_layer(embed_dim)
         self.fc_dropout = nn.Dropout(p=fc_drop_rate) if fc_drop_rate > 0 else nn.Identity()
 
-        self.agg_block = AggregationBlock(num_latents=num_latents, key_softmax=key_softmax, 
-                                          weight_tie_layers=weight_tie_layers, depth=agg_depth)
+        self.agg_block = AggregationBlock(num_latents=num_latents, weight_tie_layers=agg_weights_tie, depth=agg_depth)
 
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
-        self.no_label = no_label
 
         self.fg_norm =  norm_layer(embed_dim)
         self.bg_norm =  norm_layer(embed_dim)
@@ -349,13 +339,13 @@ class VisionTransformer(nn.Module):
         self.head = nn.Linear(embed_dim, num_classes+self.num_scene_classes)
         if head_type == 'linear':
             if self.slot_fusion=='concat':
-                self.fusion_head = nn.Linear(embed_dim * num_latents, downstream_num_classes) if downstream_num_classes > 0 else nn.Identity()
+                self.fusion_head = nn.Linear(embed_dim * num_latents, downstream_nb_classes) if downstream_nb_classes > 0 else nn.Identity()
             elif self.slot_fusion =='sum':
-                self.fusion_head = nn.Linear(embed_dim, downstream_num_classes) if downstream_num_classes > 0 else nn.Identity()
+                self.fusion_head = nn.Linear(embed_dim, downstream_nb_classes) if downstream_nb_classes > 0 else nn.Identity()
             elif self.slot_fusion =='fg_only' or self.slot_fusion =='bg_only':
-                self.fusion_head = nn.Linear(embed_dim, downstream_num_classes) if downstream_num_classes > 0 else nn.Identity()
+                self.fusion_head = nn.Linear(embed_dim, downstream_nb_classes) if downstream_nb_classes > 0 else nn.Identity()
             elif self.slot_fusion =='backbone':
-                self.fusion_head = nn.Linear(embed_dim, downstream_num_classes) if downstream_num_classes > 0 else nn.Identity()      
+                self.fusion_head = nn.Linear(embed_dim, downstream_nb_classes) if downstream_nb_classes > 0 else nn.Identity()      
             trunc_normal_(self.fusion_head.weight, std=.02)
             self.apply(self._init_weights)
             self.fusion_head.weight.data.mul_(init_scale)
@@ -363,11 +353,9 @@ class VisionTransformer(nn.Module):
         else:
             #mlp
             if self.slot_fusion == 'concat':
-                self.fusion_head = MLPHead(embed_dim, downstream_num_classes, fc_drop_rate=fc_drop_rate) if downstream_num_classes > 0 else nn.Identity()
-            elif self.slot_fusion == 'sum':
-                self.fusion_head = MLPHead(embed_dim, downstream_num_classes,hidden_sizes=[768*2,768*2]) if downstream_num_classes > 0 else nn.Identity()
-            elif self.slot_fusion =='fg_only' or self.slot_fusion =='bg_only':
-                self.fusion_head = MLPHead(embed_dim, downstream_num_classes,hidden_sizes=[768*2,768*2]) if downstream_num_classes > 0 else nn.Identity()
+                self.fusion_head = MLPHead(embed_dim, downstream_nb_classes, fc_drop_rate=fc_drop_rate) if downstream_nb_classes > 0 else nn.Identity()
+            else :
+                raise NotImplementedError()
 
             trunc_normal_(self.fusion_head.classifier.weight, std=.02)
             
@@ -432,7 +420,6 @@ class VisionTransformer(nn.Module):
         #TODO token merging
         slots, attn  = self.agg_block(x)  
 
-
         bs, num_slots, _ = slots.size()
         slots = slots.reshape(-1, 768)
         slots_head = self.head(slots)
@@ -447,10 +434,6 @@ class VisionTransformer(nn.Module):
 
         fg_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), action_max_slot_indices]
         bg_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
-        # fg_logit = slots_head.view(bs, num_slots, -1)[torch.arange(bs), action_max_slot_indices]
-        # bg_logit = slots_head.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
-        
-        # return (fg_feat,bg_feat), (fg_logit,bg_logit,attn),(slots_head,slots,mask_predictions)
         
         fg_feat = self.fg_norm(fg_feat)
         bg_feat = self.bg_norm(bg_feat)
@@ -458,7 +441,6 @@ class VisionTransformer(nn.Module):
         if self.slot_fusion == 'concat':
             input = torch.concat((fg_feat, bg_feat), dim=1)
             output = self.fusion_head(fg_feat, bg_feat)
-            
             return input, output
         
         elif self.slot_fusion == 'sum':

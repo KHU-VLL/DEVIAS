@@ -45,13 +45,9 @@ class VideoHATDataset(Dataset):
         if VideoReader is None:
             raise ImportError("Unable to import `decord` which is required to read videos.")
 
-        pwd = os.getcwd()
-        if self.args.data_set == "UCF101-HAT" :
-            with open(os.path.join(pwd, "filelist/ucf101/ucf101_labels.csv"), 'r') as f :
-                data = f.readlines()
-        else :
-            with open(os.path.join(pwd, "filelist/k400/k400_labels.csv"), 'r') as f :
-                data = f.readlines()
+        anno_dir = "/".join(anno_path.split("/")[:-2])
+        with open(os.path.join(anno_dir, "labels.csv"), 'r') as f :
+            data = f.readlines()
         # idx,class_name
             
         label_ind = dict()
@@ -69,9 +65,10 @@ class VideoHATDataset(Dataset):
                 fg_class, fg_vid_name = key_vid.split('/')[0], key_vid.split('/')[1]
                 fg_class_idx = label_ind[fg_class] 
                 
-                self.dataset_samples.append(os.path.join(self.data_path, 'original', key_vid))
-                self.dataset_masks.append(os.path.join(self.data_path, 'seg', key_vid))
-                self.dataset_inpaints.append(os.path.join(self.data_path, 'inp', contents[0]))
+                #! for hat-kientics, use 'mkdir videos; mv */* videos/' command
+                self.dataset_samples.append(os.path.join(self.data_path, 'original/videos', fg_vid_name))
+                self.dataset_masks.append(os.path.join(self.data_path, 'seg/videos', fg_vid_name))
+                self.dataset_inpaints.append(os.path.join(self.data_path, 'inpaint/videos', contents[0].split('/')[1]))
                 self.background_len_array.append(contents[1])
                 self.label_array.append(fg_class_idx)
                 

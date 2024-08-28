@@ -4,82 +4,50 @@ import numpy as np
 import time
 import torch
 import torch.backends.cudnn as cudnn
-import json,math
+import json
 import os
 from functools import partial
 from pathlib import Path
 from collections import OrderedDict
+import random
 
 from mixup import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
-import torch.distributed as dist
 
 from datasets import build_dataset
-from engine_for_slot import train_one_epoch, validation_one_epoch, final_test, merge, final_test_with_scene_label
+from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
 from utils import NativeScalerWithGradNormCount as NativeScaler
 from utils import  multiple_samples_collate
 import utils
-import modeling_slot
-import modeling_finetune
-import random
+import modeling_slot_fusion
 
-from train_loss import TrainLoss
-from run_scuba import run_scuba
-from run_knn import run_knn
 
 def print_requires_grad_parameters(model):
     for name, param in model.named_parameters():
         if param.requires_grad:
             print(name)
-
+            
 def get_args():
     parser = argparse.ArgumentParser('VideoMAE fine-tuning and evaluation script for video classification', add_help=False)
     parser.add_argument('--batch_size', default=64, type=int)
     parser.add_argument('--epochs', default=30, type=int)
     parser.add_argument('--update_freq', default=1, type=int)
     parser.add_argument('--save_ckpt_freq', default=100, type=int)
-    parser.add_argument('--run_knn', action='store_true', default=False)
-    parser.add_argument('--run_scuba', action='store_true', default=False)
+    parser.add_argument('--slot_fusion', default='concat', choices=['backbone', 'concat', 'sum', 'fg_only', 'bg_only'], type=str)
+    parser.add_argument('--downstream_nb_classes', default=400, type=int)
+    parser.add_argument('--num_latents', type=int, default= 4, help='num slots')
+    parser.add_argument('--head_type', type=str, default= 'linear')
     parser.add_argument('--agg_weights_tie', default=False, action='store_true')
     parser.add_argument('--agg_depth', default=8, type=int)
-    parser.add_argument('--use_CLIP', action='store_true', default=False)
-    parser.add_argument('--scene_model_path', default="", type=str)
-
-    #FG_mask
-    parser.add_argument('--mask_model', default='', choices=['FAME','Segformer'], type=str)
-    parser.add_argument('--beta', type=float, default= 0.5,help='FAME foreground region ratio.')
-    parser.add_argument('--prob_aug', type=float, default= 0.5)
-    parser.add_argument('--mask_distill_loss_weight', type=float, default= 1)
-    parser.add_argument('--mask_prediction_loss_weight', type=float, default= 3)
-    parser.add_argument('--scene_loss_weight', type=float, default= 4000)
-
-    #DISENTANGLE
-    parser.add_argument('--attn_criterion', default='MSE', choices=['MSE','KL', 'CE'], type=str)
-    parser.add_argument('--scene_criterion', default='KL', choices=['KL', 'CE'], type=str)
-    parser.add_argument('--use_adapter', action='store_true', default=False)
-    parser.add_argument('--subset', action='store_true', default=False)
-    #knn 할때 사용
-    parser.add_argument('--nb_knn', default=[10, 20], nargs='+', type=int,
-        help='Number of NN to use. 20 is usually working the best.')
-    
-    # Aggregation parameters
-    parser.add_argument('--num_latents', type=int, default= 4, help='num slots')
-    # aggregation lr scale
     parser.add_argument('--agg_block_scale', type=float, default= 0.8)
-
     
     # Model parameters
-    parser.add_argument('--model', default='slot_vit_base_patch16_224', type=str, metavar='MODEL',
+    parser.add_argument('--model', default='vit_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--tubelet_size', type=int, default= 2)
-    parser.add_argument('--key_softmax', type=int, default=-1)
-    parser.add_argument('--no_label', action='store_true', default=False)
-    #scene, action head type
-    parser.add_argument('--head_type', type=str, default= 'linear')
-    parser.add_argument('--slot_matching_method', type=str, default= 'matching', choices=['hard_select', 'attention', 'weightedsum', 'matching', 'matching_hard'])
     parser.add_argument('--input_size', default=224, type=int,
                         help='videos input size')
 
@@ -91,6 +59,7 @@ def get_args():
                         help='Attention dropout rate (default: 0.)')
     parser.add_argument('--drop_path', type=float, default=0.1, metavar='PCT',
                         help='Drop path rate (default: 0.1)')
+
     parser.add_argument('--disable_eval_during_finetuning', action='store_true', default=False)
     parser.add_argument('--model_ema', action='store_true', default=False)
     parser.add_argument('--model_ema_decay', type=float, default=0.9999, help='')
@@ -181,23 +150,18 @@ def get_args():
     parser.add_argument('--use_cls', action='store_false', dest='use_mean_pooling')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='./filelist/k400', type=str,
+    parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
                         help='dataset path')
     parser.add_argument('--data_prefix', default='', type=str)
+    
     parser.add_argument('--nb_classes', default=400, type=int,
                         help='number of the classification types')
     parser.add_argument('--imagenet_default_mean_and_std', default=True, action='store_true')
     parser.add_argument('--num_segments', type=int, default= 1)
     parser.add_argument('--num_frames', type=int, default= 16)
     parser.add_argument('--sampling_rate', type=int, default= 4)
-    parser.add_argument('--data_set', default='Kinetics-400', choices=['SCUBA', 'Kinetics-HAT', 'UCF101-HAT', 'Kinetics-BG', 'UCF101-BG', 'Diving-48', 'Kinetics-400', 'SSV2', 'UCF101', 'HMDB51', 'image_folder'],
+    parser.add_argument('--data_set', default='Kinetics-400', choices=['Diving-48', 'Kinetics-400', 'SSV2', 'UCF101', 'HMDB51', 'image_folder'],
                         type=str, help='dataset')
-    parser.add_argument('--hat_split', default='1', choices=['1', '2', '3'], type=str)
-    parser.add_argument('--hat_eval', action='store_true', help='test on HAT three splits at once')
-    parser.add_argument('--hat_anno_path', default=None, type=str)
-    parser.set_defaults(hat_eval=False)
-    parser.add_argument('--scuba_val', action='store_true')
-    parser.set_defaults(scuba_val=False)
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--log_dir', default=None,
@@ -219,11 +183,9 @@ def get_args():
                         help='start epoch')
     parser.add_argument('--eval', action='store_true',
                         help='Perform evaluation only')
-    parser.add_argument('--eval_scene', action='store_true',
-                        help='Perform evaluation only')
     parser.add_argument('--dist_eval', action='store_true', default=False,
                         help='Enabling distributed evaluation')
-    parser.add_argument('--num_workers', default=10, type=int)
+    parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
@@ -233,7 +195,6 @@ def get_args():
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--local-rank', default=-1, type=int)
-    parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://',
                         help='url used to set up distributed training')
@@ -277,13 +238,14 @@ def main(args, ds_init):
 
     cudnn.benchmark = True
 
-    dataset_train, args.nb_classes = build_dataset(is_train=True, test_mode=False, args=args)
+    dataset_train, _ = build_dataset(is_train=True, test_mode=False, args=args)
     if args.disable_eval_during_finetuning:
         dataset_val = None
     else:
         dataset_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
     dataset_test, _ = build_dataset(is_train=False, test_mode=True, args=args)
     
+
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
     sampler_train = torch.utils.data.DistributedSampler(
@@ -303,7 +265,7 @@ def main(args, ds_init):
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
     if global_rank == 0 and args.log_dir is not None:
-        os.makedirs(args.log_dir, mode=0o777, exist_ok=True)
+        os.makedirs(args.log_dir, exist_ok=True)
         log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
     else:
         log_writer = None
@@ -344,31 +306,6 @@ def main(args, ds_init):
     else:
         data_loader_test = None
 
-    #! load scuba dataset for val
-    if args.scuba_val :
-        assert args.data_set in ["Kinetics-400", "UCF101"]
-        anno_path = 'kinetics' if args.data_set == "Kinetics-400" else 'ucf101'
-        data_path = "kinetics-places" if args.data_set == "Kinetics-400" else 'ucf101-places/generated_videos'
-        args.data_set = 'SCUBA'
-        args.data_path = os.path.join(os.getcwd(), 'filelist/scuba', anno_path)
-        args.data_prefix = os.path.join('/local_datasets/scuba', data_path)
-    
-        dataset_scuba_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
-        num_tasks = utils.get_world_size()
-        global_rank = utils.get_rank()
-        assert args.dist_eval
-        sampler_scuba_val = torch.utils.data.DistributedSampler(
-            dataset_scuba_val, num_replicas=num_tasks, rank=global_rank, shuffle=False)
-
-        collate_func = None
-        data_loader_scuba_val = torch.utils.data.DataLoader(
-                dataset_scuba_val, sampler=sampler_scuba_val,
-                batch_size=int(1.5 * args.batch_size),
-                num_workers=args.num_workers,
-                pin_memory=args.pin_mem,
-                drop_last=False
-            )
-
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
@@ -393,52 +330,15 @@ def main(args, ds_init):
         init_scale=args.init_scale,
         num_latents=args.num_latents,
         head_type=args.head_type,
-        slot_matching=args.slot_matching_method,
         agg_weights_tie=args.agg_weights_tie,
         agg_depth=args.agg_depth,
-        num_scene_classes=365
+        num_scene_classes=365,
+        slot_fusion=args.slot_fusion,
+        downstream_nb_classes=args.downstream_nb_classes
     )
-    
-    scene_model =  create_model(
-        'vit_base_patch16_224',
-        pretrained=False,
-        num_classes=365,
-        all_frames=args.num_frames * args.num_segments,
-        tubelet_size=args.tubelet_size,
-        fc_drop_rate=args.fc_drop_rate,
-        drop_rate=args.drop,
-        drop_path_rate=args.drop_path,
-        attn_drop_rate=args.attn_drop_rate,
-        drop_block_rate=None,
-        use_checkpoint=args.use_checkpoint,
-        use_mean_pooling=False,
-        init_scale=args.init_scale,
-    )
-    
-    scene_path = args.scene_model_path
-    weight = torch.load(scene_path, map_location='cpu')['model']
-
-    msg = scene_model.load_state_dict(weight)
-    print(f'scene model load weight msg : {msg}')
-    
-    for param in scene_model.parameters():
-        param.requires_grad = False
 
     print("Turning parameters")
     print_requires_grad_parameters(model)
-
-    if args.mask_model == "FAME":
-        from fame import FAME
-        mask_model = FAME(beta=args.beta,prob_aug=args.prob_aug)
-    elif args.mask_model == "Segformer":
-        from transformers import SegformerForSemanticSegmentation
-        mask_model = SegformerForSemanticSegmentation.from_pretrained("nvidia/segformer-b3-finetuned-cityscapes-1024-1024")
-        mask_model = mask_model.cuda().half()
-        mask_model.eval()
-    elif args.mask_model == "" :
-        mask_model = None
-    else:
-        raise ValueError('mask model Error')
 
     patch_size = model.patch_embed.patch_size
     print("Patch size = %s" % str(patch_size))
@@ -474,6 +374,8 @@ def main(args, ds_init):
                 new_dict[key[9:]] = checkpoint_model[key]
             elif key.startswith('encoder.'):
                 new_dict[key[8:]] = checkpoint_model[key]
+            elif key.startswith('model.'):
+                new_dict[key[6:]] = checkpoint_model[key]
             else:
                 new_dict[key] = checkpoint_model[key]
         checkpoint_model = new_dict
@@ -509,7 +411,6 @@ def main(args, ds_init):
         utils.load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
 
     model.to(device)
-    scene_model.to(device)
 
     model_ema = None
     if args.model_ema:
@@ -521,11 +422,10 @@ def main(args, ds_init):
         print("Using EMA with decay = %.8f" % args.model_ema_decay)
 
     model_without_ddp = model
-    scene_model_ddp =scene_model
+
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     print("Model = %s" % str(model_without_ddp))
-    print("Scene Model = %s" % str(scene_model_ddp))
     print('number of params:', n_parameters)
 
     total_batch_size = args.batch_size * args.update_freq * utils.get_world_size()
@@ -556,18 +456,13 @@ def main(args, ds_init):
         optimizer_params = get_parameter_groups(
             model, args.weight_decay, skip_weight_decay_list,
             assigner.get_layer_id if assigner is not None else None,
-            assigner.get_scale if assigner is not None else None,
-            agg_block_scale = args.agg_block_scale
-            )
+            assigner.get_scale if assigner is not None else None)
         model, optimizer, _, _ = ds_init(
             args=args, model=model, model_parameters=optimizer_params, dist_init_required=not args.distributed,
         )
+
         print("model.gradient_accumulation_steps() = %d" % model.gradient_accumulation_steps())
         assert model.gradient_accumulation_steps() == args.update_freq
-        scene_model, _, _, _ = ds_init(
-    args=args, model=scene_model, dist_init_required=not args.distributed
-)
-        
     else:
         if args.distributed:
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
@@ -598,36 +493,15 @@ def main(args, ds_init):
     else:
         criterion = torch.nn.CrossEntropyLoss()
 
-    train_criterion = TrainLoss(
-            criterion = criterion,
-            scene_criterion=args.scene_criterion,
-            num_action_classes=args.nb_classes,
-            slot_matching_method=args.slot_matching_method,
-            mask_prediction_loss_weight=args.mask_prediction_loss_weight,
-            mask_distill_loss_weight=args.mask_distill_loss_weight,
-            scene_loss_weight=args.scene_loss_weight
-    )
+    print("criterion = %s" % str(criterion))
 
     utils.auto_load_model(
         args=args, model=model, model_without_ddp=model_without_ddp,
         optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
 
-    if args.hat_eval :
-        from hat_eval import hat_eval
-        if args.eval_scene :
-            print('usebglabel'*10)
-            hat_eval(args, model, final_test_with_scene_label, merge, scene_model=scene_model)
-        else :
-            hat_eval(args, model, final_test, merge)
-        exit(0)
-
     if args.eval:
         preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
-        if args.eval_scene :
-            print('usebglabel'*10)
-            test_stats = final_test_with_scene_label(data_loader_test, model, scene_model, device, preds_file, num_labels=args.nb_classes)
-        else :
-            test_stats = final_test(data_loader_test, model, device, preds_file)
+        test_stats = final_test(data_loader_test, model, device, preds_file)
         torch.distributed.barrier()
         if global_rank == 0:
             print("Start merging results...")
@@ -640,34 +514,22 @@ def main(args, ds_init):
                     f.write(json.dumps(log_stats) + "\n")
         exit(0)
         
-    if args.run_knn:
-        model = model.float()
-        scene_model = scene_model.float()
-        run_knn(model,scene_model,args)
-        exit(0)
-        
-    if args.run_scuba:
-        run_scuba(model, args, final_test, merge, final_test_with_scene_label, scene_model)
-        # run_scuba(model, args, final_test, merge)     #! test only FG
-        exit(0)
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
     max_accuracy = 0.0
-    max_scuba_accuracy = 0.0
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
         if log_writer is not None:
             log_writer.set_step(epoch * num_training_steps_per_epoch * args.update_freq)
-
         train_stats = train_one_epoch(
-            model,scene_model, train_criterion, data_loader_train, optimizer,
+            model, criterion, data_loader_train, optimizer,
             device, epoch, loss_scaler, args.clip_grad, model_ema, mixup_fn,
             log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
             lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
             num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
-            mask_model=mask_model,args=args
         )
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
@@ -675,7 +537,7 @@ def main(args, ds_init):
                     args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                     loss_scaler=loss_scaler, epoch=epoch, model_ema=model_ema)
         if data_loader_val is not None:
-            test_stats = validation_one_epoch(data_loader_val, model, device,args)
+            test_stats = validation_one_epoch(data_loader_val, model, device)
             print(f"Accuracy of the network on the {len(dataset_val)} val videos: {test_stats['acc1']:.1f}%")
             if max_accuracy < test_stats["acc1"]:
                 max_accuracy = test_stats["acc1"]
@@ -694,24 +556,6 @@ def main(args, ds_init):
                          **{f'val_{k}': v for k, v in test_stats.items()},
                          'epoch': epoch,
                          'n_parameters': n_parameters}
-            
-            #! val on scuba
-            if args.scuba_val and epoch % 10 == 0 and epoch > 49 :
-                test_scuba_stats = validation_one_epoch(data_loader_scuba_val, model, device, args)
-                print(f"Accuracy of the network on the {len(dataset_scuba_val)} SCUBA videos: {test_scuba_stats['acc1']:.1f}%")
-                
-                if max_scuba_accuracy < test_scuba_stats["acc1"]:
-                    max_scuba_accuracy = test_scuba_stats["acc1"]
-                    if args.output_dir and args.save_ckpt:
-                        utils.save_model(
-                            args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                            loss_scaler=loss_scaler, epoch="scuba-best", model_ema=model_ema)
-                
-                if log_writer is not None:
-                    log_writer.update(val_scuba_acc1=test_scuba_stats['acc1'], head="perf", step=epoch)
-                log_stats = {**{k : v for k, v in log_stats.items()},
-                             'val_scuba_acc1' : test_scuba_stats['acc1']}
-            
         else:
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,
@@ -734,19 +578,10 @@ def main(args, ds_init):
         if args.output_dir and utils.is_main_process():
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
+            total_time = time.time() - start_time
+            total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+            print('Training time {}'.format(total_time_str))
 
-
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
-    torch.distributed.barrier()
-
-    run_scuba(model, args, final_test, merge)
-
-    # model = model.float()
-    # scene_model = scene_model.float()
-    # run_knn(model,scene_model,args)
-   
 if __name__ == '__main__':
     opts, ds_init = get_args()
     if opts.output_dir:

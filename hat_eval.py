@@ -5,7 +5,7 @@ import utils
 import json
 
 def hat_eval(args, model, test_func, merge_func, scene_model=None) :
-    anno_path = args.data_path  # like filelist/hat/ucf101/rand
+    anno_path = args.hat_anno_path  # like filelist/hat/ucf101/rand
     if 'kinetics' in anno_path :
         args.data_set = 'Kinetics-HAT'
     elif 'ucf101' in anno_path :
