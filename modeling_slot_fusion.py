@@ -52,7 +52,10 @@ class MLPHead(nn.Module):
         
         output = torch.concat([fg_token, bg_token], dim=1)
         
+        #! for ucf101
         # output = self.classifier(self.fc_dropout(self.relu(self.fc_input_ln(output))))
+        
+        #! for diving48
         output = self.classifier(self.fc_dropout(self.relu(output)))
 
         return output
