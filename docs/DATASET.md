@@ -3,7 +3,7 @@
 * For training  
 We train DEVIAS and baseline models on [UCF-101](https://arxiv.org/abs/1212.0402) and [Kinetics-400](https://arxiv.org/abs/1705.07750), which are the most popular datasets for training action recognition models.
 To use these datasets, please download the videos through [UCF-101](https://www.crcv.ucf.edu/data/UCF101.php) or [Kinetics-400](https://opendatalab.com/OpenMMLab/Kinetics-400).   
-We also train the models on [HVU](https://arxiv.org/abs/1904.11451), which provides both action and scene ground-truth labels. You can download the videos by referring to [the official repository](https://github.com/holistic-video-understanding/HVU-Downloader). Note that we use the subset of HVU, consisting of videos that have a single action label and a single scene label, with a total of 27,532 videos. The list of videos in the subset is `filelist/hvu/train.csv`.
+We also train the models on [HVU](https://arxiv.org/abs/1904.11451), which provides both action and scene ground-truth labels. You can download the videos from [the official repository](https://github.com/holistic-video-understanding/HVU-Downloader). Note that we use the subset of HVU, consisting of videos that have a single action label and a single scene label, with a total of 27,532 videos. The list of videos in the subset is `filelist/hvu/train.csv`.
 
 * For evaluation  
 We use various datasets for evaluating the models on both seen and unseen action-scene combination scenarios.  
