@@ -4,7 +4,7 @@ We initialize the model with weights pre-trained using our DEVIAS training strat
 Please refer to [TRAIN.md](docs/TRAIN.md) for instructions on how to train DEVIAS.  
 We employ various downstream datasets; [Diving48](http://www.svcl.ucsd.edu/projects/resound/dataset.html), [Something-Something V2](https://developer.qualcomm.com/software/ai-datasets/something-something), [UCF-101](https://www.crcv.ucf.edu/data/UCF101.php), [ActivityNet](http://activity-net.org/download.html). We use the subset of SSV2 as mentioned in the supplementary of our paper. 
 
-## Fine-tune on Diving48, Something-Something V2, ActivityNet
+## Fine-tune on Diving48, Something-Something V2
 
 ```bash
 # for diving48
@@ -20,13 +20,6 @@ DATA_PATH='YOUR_PATH/filelist/mini_ssv2'
 DATA_PREFIX='YOUR_PATH/something-something-v2'
 DATASET='SSV2'
 NUM_CLASSES=87
-
-# for activitynet
-OUTPUT_DIR='YOUR_PATH/work_dir/downstream_activitynet'
-DATA_PATH='YOUR_PATH/filelist/activitynet'
-DATA_PREFIX='YOUR_PATH/Activity_256/videos_256'
-DATASET='ActivityNet'
-NUM_CLASSES=200
 
 MODEL_PATH='YOUR_PATH/ckpt/devias_k400_weights.pth'
 
@@ -71,14 +64,22 @@ OMP_NUM_THREADS=1 torchrun \
     --agg_weights_tie --agg_depth 8 
   ```
 
-## Fine-tune on UCF-101
+## Fine-tune on UCF-101, ActivityNet
 
 ```bash
+# for ucf101
 OUTPUT_DIR='YOUR_PATH/work_dir/downstream_ucf101'
 DATA_PATH='YOUR_PATH/filelist/ucf101'
 DATA_PREFIX='YOUR_PATH/UCF-101'
 DATASET='UCF101'
 NUM_CLASSES=101
+
+# for activitynet
+OUTPUT_DIR='YOUR_PATH/work_dir/downstream_activitynet'
+DATA_PATH='YOUR_PATH/filelist/activitynet'
+DATA_PREFIX='YOUR_PATH/Activity_256/videos_256'
+DATASET='ActivityNet'
+NUM_CLASSES=200
 
 MODEL_PATH='YOUR_PATH/ckpt/devias_k400_weights.pth'
 
