@@ -208,8 +208,6 @@ def get_args():
     parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
                         help='dataset path')
     parser.add_argument('--data_prefix', default='/data2/local_datasets/Kinetics-400', type=str)
-    parser.add_argument('--eval_data_path', default=None, type=str,
-                        help='dataset path for evaluation')
     parser.add_argument('--nb_classes', default=400, type=int,
                         help='number of the classification types')
     parser.add_argument('--imagenet_default_mean_and_std', default=True, action='store_true')
@@ -219,6 +217,7 @@ def get_args():
     parser.add_argument('--data_set', default='Kinetics-400', choices=['Diving-48', 'Kinetics-400', "UCF101-HAT", "Kinetics-HAT", 'SSV2', 'UCF101', 'HMDB51', 'image_folder'],
                         type=str, help='dataset')
     parser.add_argument('--hat_split', default='1', choices=['1', '2', '3'], type=str)
+    parser.add_argument('--hat_anno_path', default=None, type=str)
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--log_dir', default=None,

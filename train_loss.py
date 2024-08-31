@@ -9,14 +9,14 @@ class TrainLoss(nn.Module):
     https://github.com/facebookresearch/detr/blob/3af9fa878e73b6894ce3596450a8d9b89d918ca9/models/matcher.py#L12
     """
     def __init__(self,
-                 criterion:torch.nn.Module, scene_criterion:torch.nn.Module, num_action_classes:int, fusion='matching', combine=True, 
+                 criterion:torch.nn.Module, scene_criterion:torch.nn.Module, num_action_classes:int, slot_matching_method='matching', combine=True, 
                  scene_loss_weight=2000, mask_prediction_loss_weight=1, mask_distill_loss_weight=3):
         super().__init__()
         self.criterion = criterion
         self.scene_criterion = scene_criterion
         self.num_action_classes = num_action_classes
         self.num_scene_classes = 365
-        self.fusion = fusion
+        self.slot_matching_method = slot_matching_method
         self.combine = combine
         self.mask_prediction_loss_weight = mask_prediction_loss_weight
         self.mask_distill_loss_weight = mask_distill_loss_weight
@@ -26,7 +26,7 @@ class TrainLoss(nn.Module):
         print(f'mask_distill_loss_weight : {self.mask_distill_loss_weight}')
     
     def forward(self, model, student_output, teacher_outputs, target, fg_mask=None):
-        if self.fusion == 'hard_select':
+        if self.slot_matching_method == 'hard_select':
             (fg_feat, bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions) = student_output
             bs = target.shape[0]
             device = fg_logit.device
@@ -81,7 +81,7 @@ class TrainLoss(nn.Module):
                 'cosine_loss':cosine_loss.item()}
 
 
-        elif self.fusion == 'matching':
+        elif self.slot_matching_method == 'matching':
             # slot_action_head : (bs x num_slots) x action_classes
             # slots_scene_head : (bs x num_slots) x scene_classes
             (fg_feat, bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions) = student_output

@@ -352,15 +352,10 @@ class VisionTransformer(nn.Module):
                  use_checkpoint=False,
                  use_mean_pooling=True,
                  num_latents=4,
-                 residual=False,
                  head_type='linear',
-                 fusion='hard_select',
-                 use_adapter=False,
-                 key_softmax=False,
-                 disentangle_criterion=None,
-                 no_label=False,
+                 slot_matching='hard_select',
                  num_scene_classes=365,
-                 weights_tie=False,
+                 agg_weights_tie=False,
                  agg_depth=4
                  ):
         super().__init__()
@@ -368,9 +363,7 @@ class VisionTransformer(nn.Module):
         self.num_classes = num_classes
         self.num_scene_classes = num_scene_classes
         
-        self.residual = residual
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-        self.disentangle_criterion = disentangle_criterion
         self.tubelet_size = tubelet_size
         self.patch_embed = PatchEmbed(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
@@ -381,22 +374,22 @@ class VisionTransformer(nn.Module):
             trunc_normal_(self.cls_token, std=.02)
             num_patches += 1
             
-        self.fusion = fusion
+        self.slot_matching = slot_matching
         self.head_type = head_type
         self.select_slots_info = [[0,0] for i in range(self.num_slots)]
 
-        if fusion =='hard_select':
+        if slot_matching =='hard_select':
             pass
-        elif fusion =='weightedsum':
+        elif slot_matching =='weightedsum':
             self.weights = nn.Parameter(torch.ones(num_latents - 1))
-        elif fusion =='attention':
+        elif slot_matching =='attention':
             pass
-        elif fusion =='matching':
+        elif slot_matching =='matching':
             pass
-        elif fusion =='matching_hard':
+        elif slot_matching =='matching_hard':
             pass
         else:
-            raise ValueError("incorrent fusion")
+            raise ValueError("incorrent slot_matching")
 
         if use_learnable_pos_emb:
             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
@@ -408,37 +401,25 @@ class VisionTransformer(nn.Module):
 
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
-        if use_adapter: 
-             self.blocks = nn.ModuleList([
-                ResidualAttentionBlock(
-                    dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                    drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-                    init_values=init_values)
-                for i in range(depth)])
-        else:
-            self.blocks = nn.ModuleList([
-                Block(
-                    dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-                    drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-                    init_values=init_values)
-                for i in range(depth)])
+        self.blocks = nn.ModuleList([
+            Block(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
+                init_values=init_values)
+            for i in range(depth)])
         self.norm = norm_layer(embed_dim)
         self.fc_norm =  norm_layer(embed_dim)
         self.fc_dropout = nn.Dropout(p=fc_drop_rate) if fc_drop_rate > 0 else nn.Identity()
 
-        print(f"Aggregation blocks {weights_tie} depth {agg_depth}")
-        self.agg_block = AggregationBlock(num_latents=num_latents, key_softmax=key_softmax, weight_tie_layers=weights_tie, depth=agg_depth)
+        print(f"Aggregation blocks {agg_weights_tie} depth {agg_depth}")
+        self.agg_block = AggregationBlock(num_latents=num_latents, weight_tie_layers=agg_weights_tie, depth=agg_depth)
         
         self.mask_predictor = MaskPredictor()
 
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
-        self.no_label = no_label
         if head_type == 'linear':
-            if no_label:
-                self.head = nn.Linear(embed_dim, num_classes+self.num_scene_classes+1) if num_classes > 0 else nn.Identity()
-            else:
-                self.head = nn.Linear(embed_dim, num_classes+self.num_scene_classes) if num_classes > 0 else nn.Identity()
+            self.head = nn.Linear(embed_dim, num_classes+self.num_scene_classes) if num_classes > 0 else nn.Identity()
             trunc_normal_(self.head.weight, std=.02)
             self.apply(self._init_weights)
             self.head.weight.data.mul_(init_scale)
@@ -454,24 +435,6 @@ class VisionTransformer(nn.Module):
             self.head.fc2.weight.data.mul_(init_scale)
             self.head.fc2.bias.data.mul_(init_scale)
 
-
-        if use_adapter:
-            for n, m in self.blocks.named_modules():
-                if 'Adapter' in n:
-                    for n2, m2 in m.named_modules():
-                        if 'D_fc2' in n2:
-                            if isinstance(m2, nn.Linear):
-                                nn.init.constant_(m2.weight, 0)
-                                nn.init.constant_(m2.bias, 0)
-
-            ## initialize MLP_Adapter
-            for n, m in self.blocks.named_modules():
-                if 'MLP_Adapter' in n:
-                    for n2, m2 in m.named_modules():
-                        if 'D_fc2' in n2:
-                            if isinstance(m2, nn.Linear):
-                                nn.init.constant_(m2.weight, 0)
-                                nn.init.constant_(m2.bias, 0)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -539,7 +502,7 @@ class VisionTransformer(nn.Module):
         slots, attn = self.agg_block(x)  
 
         # hard select
-        if self.fusion == 'hard_select':
+        if self.slot_matching == 'hard_select':
             bg_feat = slots[:,0]
             fg_feat = slots[:,1]
             fg_logit = self.head(self.fc_dropout(fg_feat))
@@ -547,7 +510,7 @@ class VisionTransformer(nn.Module):
             return (fg_feat,bg_feat), (fg_logit,bg_logit),([],[])
 
         #weight sum
-        elif self.fusion == 'weightedsum':
+        elif self.slot_matching == 'weightedsum':
             bs, n, _ = slots.size()
             weights = self.weights.unsqueeze(0).expand(bs, -1)
             # weights = weights / weights.sum(dim=1, keepdim=True)  # Normalize weights to sum to 1
@@ -557,7 +520,7 @@ class VisionTransformer(nn.Module):
             fg_feat = slots[:,0]
             bg_feat = (weights.unsqueeze(2) * slots[:,1:4,:]).sum(dim=1)
             
-        elif self.fusion == 'matching_hard':
+        elif self.slot_matching == 'matching_hard':
             bs, num_slots, _ = slots.size()
             slots = slots.reshape(-1, 768)
             slots_head = self.head(self.fc_dropout(slots))
@@ -573,7 +536,7 @@ class VisionTransformer(nn.Module):
            
             return (fg_feat,bg_feat), (fg_logit,bg_logit),(slots_head,slots)
 
-        elif self.fusion == 'matching':
+        elif self.slot_matching == 'matching':
             bs, num_slots, _ = slots.size()
             slots = slots.reshape(-1, 768)
             slots_head = self.head(self.fc_dropout(slots))
@@ -596,7 +559,7 @@ class VisionTransformer(nn.Module):
             return (fg_feat, bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions)
 
         else:
-            raise ValueError('fusion error')
+            raise ValueError('slot_matching error')
 
 
 @register_model

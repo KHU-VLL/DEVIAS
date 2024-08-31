@@ -22,8 +22,8 @@ The following datasets are used in this project. You can download them via the p
 Please download the datasets to replicate the results of this project.
 
 ## Training
+The training instruction is in [TRAIN.md](docs/TRAIN.md).
 
-_coming soon_
 ## Validation 
 
 _coming soon_
