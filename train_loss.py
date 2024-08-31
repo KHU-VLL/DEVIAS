@@ -10,7 +10,7 @@ class TrainLoss(nn.Module):
     """
     def __init__(self,
                  criterion:torch.nn.Module, scene_criterion:torch.nn.Module, num_action_classes:int, fusion='matching', combine=True, 
-                 scene_loss_weight=4000, mask_prediction_loss_weight=1, mask_distill_loss_weight=3):
+                 scene_loss_weight=2000, mask_prediction_loss_weight=1, mask_distill_loss_weight=3):
         super().__init__()
         self.criterion = criterion
         self.scene_criterion = scene_criterion
