@@ -26,7 +26,6 @@ _pil_interpolation_to_str = {
     Image.BOX: "PIL.Image.BOX",
 }
 
-
 _RANDOM_INTERPOLATION = (Image.BILINEAR, Image.BICUBIC)
 
 

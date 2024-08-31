@@ -19,26 +19,19 @@ def _cfg(url='', **kwargs):
         **kwargs
     }
 
-class GradientReversalLayer(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output.neg()
 
 class MLPHead(nn.Module):
-    def __init__(self, in_dim, out_dim, hidden_sizes=[768, 768], fc_drop_rate=0.):
+    def __init__(self, in_dim, out_dim, fc_drop_rate=0., use_input_ln=True):
         super(MLPHead, self).__init__()
-        print(hidden_sizes[0])
-        self.fc_fg_down = nn.Linear(in_dim, in_dim // 2)
-        self.fc_bg_down = nn.Linear(in_dim, in_dim // 2)
+        self.fc_action_down = nn.Linear(in_dim, in_dim // 2)
+        self.fc_scene_down = nn.Linear(in_dim, in_dim // 2)
         
-        self.fc_fg_ln = nn.LayerNorm(in_dim // 2)
-        self.fc_bg_ln = nn.LayerNorm(in_dim // 2)
+        self.fc_action_ln = nn.LayerNorm(in_dim // 2)
+        self.fc_scene_ln = nn.LayerNorm(in_dim // 2)
         
-        # self.fc_input_ln = nn.LayerNorm(in_dim)
+        self.use_input_ln = use_input_ln
+        if use_input_ln :
+            self.fc_input_ln = nn.LayerNorm(in_dim)
 
         self.classifier = nn.Linear(in_dim, out_dim)
         
@@ -46,34 +39,19 @@ class MLPHead(nn.Module):
         self.relu = nn.ReLU()
 
         
-    def forward(self, fg_token, bg_token):
-        fg_token = self.fc_fg_ln(self.fc_fg_down(fg_token))
-        bg_token = self.fc_fg_ln(self.fc_fg_down(bg_token))
+    def forward(self, action_token, scene_token):
+        action_token = self.fc_action_ln(self.fc_action_down(action_token))
+        scene_token = self.fc_action_ln(self.fc_action_down(scene_token))
         
-        output = torch.concat([fg_token, bg_token], dim=1)
+        output = torch.concat([action_token, scene_token], dim=1)
         
-        #! for ucf101
-        # output = self.classifier(self.fc_dropout(self.relu(self.fc_input_ln(output))))
-        
-        #! for diving48
-        output = self.classifier(self.fc_dropout(self.relu(output)))
+        if self.use_input_ln :
+            output = self.classifier(self.fc_dropout(self.relu(self.fc_input_ln(output))))
+        else :
+            output = self.classifier(self.fc_dropout(self.relu(output)))
 
         return output
-
-class DropPath(torch.nn.Module):
-    def __init__(self, drop_prob=0.0):
-        super(DropPath, self).__init__()
-        self.drop_prob = drop_prob
-
-    def forward(self, x):
-        if self.training and self.drop_prob > 0.0:
-            keep_prob = 1.0 - self.drop_prob
-            shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # Only drop paths for the batch dimension
-            random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-            random_tensor.floor_()  # binarize
-            output = x.div(keep_prob) * random_tensor
-            return output
-        return x
+    
 
 class DropPath(nn.Module):
     """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
@@ -158,6 +136,7 @@ class Attention(nn.Module):
             return x, attn
         return x
 
+
 class Block(nn.Module):
 
     def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
@@ -232,35 +211,6 @@ def get_sinusoid_encoding_table(n_position, d_hid):
     return  torch.tensor(sinusoid_table,dtype=torch.float, requires_grad=False).unsqueeze(0) 
 
 
-class MaskPredictor(nn.Module):
-    def __init__(self):
-        super(MaskPredictor, self).__init__()
-        
-        self.conv1 = nn.Conv2d(770, 256, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(256, 64, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(64, 16, kernel_size=3, stride=1, padding=1)
-        self.conv4 = nn.Conv2d(16, 4, kernel_size=3, stride=1, padding=1)
-        self.conv5 = nn.Conv2d(4, 1, kernel_size=3, stride=1, padding=1)
-        
-        self.decoder = nn.Sequential(
-            nn.Linear(768, 512), 
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 196),
-        )
-        
-        self.act = nn.ReLU()
-        
-    def forward(self, cls_token):
-        
-        width = 14
-        
-        mask = self.decoder(cls_token)
-        
-        return mask.squeeze().reshape(cls_token. shape[0], width*width)  # Remove extra dimension for [batch, 14, 14]
-
-
 class VisionTransformer(nn.Module):
     """ Vision Transformer with support for patch or hybrid CNN input stage
     """
@@ -286,17 +236,18 @@ class VisionTransformer(nn.Module):
                  all_frames=16,
                  tubelet_size=2,
                  use_checkpoint=False,
-                 use_mean_pooling=True,
                  num_latents=4,
                  head_type='linear',
                  agg_weights_tie=True,
                  agg_depth=4,
                  num_scene_classes=365,
-                 slot_fusion='concat',
-                 downstream_nb_classes=50
+                 slot_fusion_method='concat',
+                 downstream_nb_classes=50,
+                 use_input_ln=True
                  ):
         super().__init__()
         self.num_slots = num_latents
+        #! please set the below two num_classes arguments same as used in pre-training on Kinetics-400
         self.num_classes = num_classes
         self.num_scene_classes = num_scene_classes
         
@@ -306,11 +257,7 @@ class VisionTransformer(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
         num_patches = self.patch_embed.num_patches
         self.use_checkpoint = use_checkpoint
-        if not use_mean_pooling:
-            self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-            trunc_normal_(self.cls_token, std=.02)
-            num_patches += 1
-        self.slot_fusion = slot_fusion
+        self.slot_fusion_method = slot_fusion_method
 
         if use_learnable_pos_emb:
             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
@@ -320,6 +267,7 @@ class VisionTransformer(nn.Module):
 
         self.pos_drop = nn.Dropout(p=drop_rate)
 
+        self.use_input_ln = use_input_ln
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
         self.blocks = nn.ModuleList([
@@ -331,23 +279,20 @@ class VisionTransformer(nn.Module):
         self.norm = norm_layer(embed_dim)
         self.fc_dropout = nn.Dropout(p=fc_drop_rate) if fc_drop_rate > 0 else nn.Identity()
 
+        print(f"Aggregation blocks {agg_weights_tie} depth {agg_depth}")
         self.agg_block = AggregationBlock(num_latents=num_latents, weight_tie_layers=agg_weights_tie, depth=agg_depth)
 
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
 
-        self.fg_norm =  norm_layer(embed_dim)
-        self.bg_norm =  norm_layer(embed_dim)
+        self.action_norm =  norm_layer(embed_dim)
+        self.scene_norm =  norm_layer(embed_dim)
 
         self.head = nn.Linear(embed_dim, num_classes+self.num_scene_classes)
         if head_type == 'linear':
-            if self.slot_fusion=='concat':
+            if self.slot_fusion_method == 'concat':
                 self.fusion_head = nn.Linear(embed_dim * num_latents, downstream_nb_classes) if downstream_nb_classes > 0 else nn.Identity()
-            elif self.slot_fusion =='sum':
-                self.fusion_head = nn.Linear(embed_dim, downstream_nb_classes) if downstream_nb_classes > 0 else nn.Identity()
-            elif self.slot_fusion =='fg_only' or self.slot_fusion =='bg_only':
-                self.fusion_head = nn.Linear(embed_dim, downstream_nb_classes) if downstream_nb_classes > 0 else nn.Identity()
-            elif self.slot_fusion =='backbone':
+            elif self.slot_fusion_method =='gap':
                 self.fusion_head = nn.Linear(embed_dim, downstream_nb_classes) if downstream_nb_classes > 0 else nn.Identity()      
             trunc_normal_(self.fusion_head.weight, std=.02)
             self.apply(self._init_weights)
@@ -355,8 +300,8 @@ class VisionTransformer(nn.Module):
             self.fusion_head.bias.data.mul_(init_scale)
         else:
             #mlp
-            if self.slot_fusion == 'concat':
-                self.fusion_head = MLPHead(embed_dim, downstream_nb_classes, fc_drop_rate=fc_drop_rate) if downstream_nb_classes > 0 else nn.Identity()
+            if self.slot_fusion_method == 'concat':
+                self.fusion_head = MLPHead(embed_dim, downstream_nb_classes, fc_drop_rate=fc_drop_rate, use_input_ln=use_input_ln) if downstream_nb_classes > 0 else nn.Identity()
             else :
                 raise NotImplementedError()
 
@@ -387,7 +332,7 @@ class VisionTransformer(nn.Module):
         self.num_classes = num_classes
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_features(self, x,return_attn=False):
+    def forward_features(self, x, return_attn=False):
         x = self.patch_embed(x)
         B, _, _ = x.size()
 
@@ -399,30 +344,38 @@ class VisionTransformer(nn.Module):
 
         if self.use_checkpoint:
             for blk in self.blocks:
-                x= checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x)
                 # attn_list.append(attn)
         else:  
             if return_attn: 
                 for blk in self.blocks:
-                    x, attn = blk(x,return_attn=return_attn)
+                    x, attn = blk(x, return_attn=return_attn)
                     attn_list.append(attn)
             else:
                 for blk in self.blocks:
-                    x = blk(x,return_attn=return_attn)
+                    x = blk(x, return_attn=return_attn)
                 
         x = self.norm(x)
-        return x
+        if return_attn :
+            return x, attn_list
+        else :
+            return x
 
-    def forward(self, x,return_attn=False):
-        x = self.forward_features(x,return_attn)
-        if self.slot_fusion == 'backbone':
-            x = self.fc_dropout(self.fg_norm(x.mean(1)))
+    def forward(self, x, return_attn=False):
+        if return_attn :
+            x, attn = self.forward_features(x, return_attn)
+        else :
+            x = self.forward_features(x, return_attn)
+
+        if self.slot_fusion_method == 'gap':
+            x = self.fc_dropout(self.action_norm(x.mean(1)))
             x = self.fusion_head(x)
-            return [],x
+            return x.mean(1), x
 
-        #TODO token merging
-        slots, attn  = self.agg_block(x)  
+        slots, attn = self.agg_block(x)  
 
+        #! implement only for using matching algorithm
+        #! use pre-trained head to select action/scene slot
         bs, num_slots, _ = slots.size()
         slots = slots.reshape(-1, 768)
         slots_head = self.head(slots)
@@ -435,31 +388,16 @@ class VisionTransformer(nn.Module):
         action_max_slot_indices = torch.argmax(action_softmax_output.max(dim=-1).values, dim=1)
         scene_max_slot_indices = torch.argmax(scene_softmax_output.max(dim=-1).values, dim=1)
 
-        fg_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), action_max_slot_indices]
-        bg_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
+        action_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), action_max_slot_indices]
+        scene_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
         
-        fg_feat = self.fg_norm(fg_feat)
-        bg_feat = self.bg_norm(bg_feat)
+        action_feat = self.action_norm(action_feat)
+        scene_feat = self.scene_norm(scene_feat)
 
-        if self.slot_fusion == 'concat':
-            input = torch.concat((fg_feat, bg_feat), dim=1)
-            output = self.fusion_head(fg_feat, bg_feat)
+        if self.slot_fusion_method == 'concat':
+            input = torch.concat((action_feat, scene_feat), dim=1)
+            output = self.fusion_head(action_feat, scene_feat)
             return input, output
-        
-        elif self.slot_fusion == 'sum':
-            input = fg_feat + bg_feat
-            output = self.fusion_head(input)
-            return input,output
-        
-        elif self.slot_fusion == 'fg_only':
-            input = fg_feat
-            output = self.fusion_head(input)
-            return input,output
-        
-        elif self.slot_fusion == 'bg_only':
-            input = bg_feat
-            output = self.fusion_head(input)
-            return input,output
         
         else:
             raise ValueError('fusion error')

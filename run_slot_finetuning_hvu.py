@@ -18,7 +18,6 @@ from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from scipy.optimize import linear_sum_assignment
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
-import torch.distributed as dist
 
 from datasets import build_dataset
 from engine_for_slot_hvu import train_one_epoch, validation_one_epoch
@@ -27,141 +26,14 @@ from utils import  multiple_samples_collate
 import utils
 import modeling_slot
 import random
-
 from train_loss import TrainLoss
-from run_scuba import run_scuba
-from run_knn import run_knn
 
 from einops import reduce
 from fame_hvu import FAME
-
+from hvu_train_loss import TrainLoss
 
 HVU_NUM_ACTION_CLASSES = 739
 HVU_NUM_SCENE_CLASSES = 248
-
-class TrainLoss(nn.Module):
-    """
-    https://github.com/facebookresearch/detr/blob/3af9fa878e73b6894ce3596450a8d9b89d918ca9/models/matcher.py#L12
-    """
-    def __init__(self,
-                 criterion:torch.nn.Module,scene_criterion:torch.nn.Module,num_action_classes:int,fusion='matching',combine=True,mask_prediction_loss_weight=1,mask_distill_loss_weight=3):
-        super().__init__()
-        self.criterion = criterion
-        self.scene_criterion = scene_criterion
-        self.num_action_classes = HVU_NUM_ACTION_CLASSES   #! for hvu
-        self.num_scene_classes = HVU_NUM_SCENE_CLASSES
-        self.fusion = fusion
-        self.combine = combine
-        self.mask_prediction_loss_weight = mask_prediction_loss_weight
-        self.mask_distill_loss_weight = mask_distill_loss_weight
-        print(f'mask_prediction_loss_weight : {self.mask_prediction_loss_weight}')
-        print(f'mask_distill_loss_weight : {self.mask_distill_loss_weight}')
-
-    def forward(self, model, student_output, action_targets, scene_targets, fg_mask=None):
-        #! implemented only for matching
-        # slot_action_head : (bs x num_slots) x action_classes
-        # slots_scene_head : (bs x num_slots) x scene_classes
-        (fg_feat, bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions) = student_output
-        device = slots_head.device
-        dtype = slots_head.dtype
-
-        bs = action_targets.shape[0]
-        target = action_targets
-        num_latent = int(slots_head.shape[0] / bs)
-        num_head = attn.size(0) // bs
-
-        # attn mean per head
-        attn = reduce(attn, '(bs num_head) num_latent dim -> bs num_latent dim', 'mean', num_head=num_head)
-        mask_predictions = mask_predictions.reshape(bs,num_latent, -1)
-
-        scene_target = scene_targets
-        scene_target += self.num_action_classes
-        
-        # teacher_scene_logit = teacher_scene_logit.softmax(dim=-1)
-        slots_head_sfmax = slots_head.softmax(-1)
-        slots_action_head_sfmax = slots_head_sfmax[:,:self.num_action_classes]
-        slots_scene_head_sfmax = slots_head_sfmax[:,self.num_action_classes:self.num_action_classes+self.num_scene_classes]
-        all_indices = []
-
-        for i in range(bs):
-            # Compute cost for each query for scene and action for the current image
-            cost_action_class = -slots_head_sfmax[i*num_latent:(i+1)*num_latent, target[i]]
-            cost_scene_class = -slots_head_sfmax[i*num_latent:(i+1)*num_latent, scene_target[i]]
-            
-            # Concatenate the two costs
-            combined_cost = torch.cat([cost_action_class.unsqueeze(-1), cost_scene_class.unsqueeze(-1)], dim=1)
-            
-            # Use Hungarian algorithm on the combined cost
-            indices = linear_sum_assignment(combined_cost.detach().cpu())
-            all_indices.append(indices)
-
-        # Convert the list of indices into the desired format
-        all_indices = [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in all_indices]
-
-        action_loss = torch.tensor([0],device=device, dtype=dtype)
-        scene_loss = torch.tensor([0],device=device, dtype=dtype)
-        selected_slots = []
-        action_logit = []
-        slots_head = slots_head.view(bs,num_latent,-1)
-        fg_mask, fg_masks_per_frames = fg_mask
-        # fg_mask bs x 196
-        # fg_masks_per_frames bs x 1568
-        
-        fg_mask = fg_mask.half() if fg_mask.dtype != torch.float16 else fg_mask
-        fg_masks_per_frames = fg_masks_per_frames.half() if fg_masks_per_frames.dtype != torch.float16 else fg_masks_per_frames
-        
-        mask_prediction_loss = torch.tensor([0],device=device, dtype=dtype)
-        mask_distill_loss = torch.tensor([0],device=device, dtype=dtype)
-        
-        for batch_idx, (slot_indices, label_indices) in enumerate(all_indices):
-            for s_idx, l_idx in zip(slot_indices, label_indices):
-                if l_idx == 0:  # action
-                    mask_distill_loss += F.mse_loss(attn[batch_idx,s_idx], fg_masks_per_frames[batch_idx]) * self.mask_distill_loss_weight  # distill loss
-                    mask_prediction_loss += F.binary_cross_entropy_with_logits(  
-                        mask_predictions[batch_idx, s_idx],
-                        fg_mask[batch_idx]
-                    ) * self.mask_prediction_loss_weight
-                    action_loss += F.cross_entropy(slots_head[batch_idx, s_idx], target[batch_idx])
-                    action_logit.append(slots_head[batch_idx, s_idx])
-                    selected_slots.append((batch_idx, int(s_idx)))
-                elif l_idx == 1:  # scene
-                    if self.scene_criterion == "CE":
-                        scene_loss += F.cross_entropy(slots_head[batch_idx, s_idx], scene_target[batch_idx])
-                    
-                    elif self.scene_criterion == "KL":
-                        logit = slots_head[batch_idx, s_idx]
-                        target_index = scene_target[batch_idx]
-                        log_prob = F.log_softmax(logit.unsqueeze(0), dim=1)  
-                        _scene_target = torch.zeros_like(log_prob).scatter_(1, target_index.view(1, 1), 1)
-                        scene_loss += F.kl_div(log_prob, _scene_target, reduction='batchmean')
-                        
-                    selected_slots.append((batch_idx, int(s_idx)))
-
-        action_loss /= bs
-        scene_loss /= bs
-        mask_prediction_loss /= bs
-        mask_distill_loss /= bs
-            
-        slots = slots.reshape(bs,num_latent, -1)
-        
-        normed_slots = F.normalize(slots, p=2, dim=2)
-
-        cosine_sim_matrix = torch.bmm(normed_slots, normed_slots.transpose(1, 2))
-
-        identity = torch.eye(cosine_sim_matrix.size(1)).to(cosine_sim_matrix.device)
-        cosine_sim_matrix = cosine_sim_matrix * (1 - identity)
-
-        cosine_loss = (cosine_sim_matrix.sum(dim=(1,2)) / (cosine_sim_matrix.size(1) * (cosine_sim_matrix.size(1) - 1))).mean()
-
-        total_loss = action_loss + scene_loss + cosine_loss + mask_prediction_loss + mask_distill_loss
-        return total_loss, \
-            torch.stack(action_logit),\
-            {'action_loss':action_loss.item(),
-            'scene_loss':scene_loss.item(),
-            'cosine_loss':cosine_loss.item(),
-            'mask_prediction_loss':mask_prediction_loss.item(),
-            'mask_distill_loss':mask_distill_loss.item()}
-
 
 def print_requires_grad_parameters(model):
     for name, param in model.named_parameters():
@@ -174,8 +46,6 @@ def get_args():
     parser.add_argument('--epochs', default=30, type=int)
     parser.add_argument('--update_freq', default=1, type=int)
     parser.add_argument('--save_ckpt_freq', default=100, type=int)
-    parser.add_argument('--run_knn', action='store_true', default=False)
-    parser.add_argument('--run_scuba', action='store_true', default=False)
     parser.add_argument('--scene_model_path', default="", type=str)
 
     #FG_mask
@@ -185,20 +55,13 @@ def get_args():
     parser.add_argument('--mask_distill_loss_weight', type=float, default= 1)
     parser.add_argument('--mask_prediction_loss_weight', type=float, default= 3)
 
-    #DISENTANGLE
-    parser.add_argument('--disentangle_criterion', default='', choices=['UNIFORM','ADVERSARIAL','GRL'], type=str)
-    parser.add_argument('--attn_criterion', default='MSE', choices=['MSE','KL', 'CE'], type=str)
     parser.add_argument('--scene_criterion', default='KL', choices=['KL', 'CE'], type=str)
-    
-    parser.add_argument('--use_adapter', action='store_true', default=False)
-    parser.add_argument('--subset', action='store_true', default=False)
-    #knn 할때 사용
     parser.add_argument('--nb_knn', default=[10, 20], nargs='+', type=int,
         help='Number of NN to use. 20 is usually working the best.')
     
     # Aggregation parameters
     parser.add_argument('--num_latents', type=int, default= 4)
-    parser.add_argument('--weights_tie', default=False, action='store_true')
+    parser.add_argument('--agg_weights_tie', default=False, action='store_true')
     parser.add_argument('--agg_depth', type=int, default= 4)
     # aggregation lr scale
     parser.add_argument('--agg_block_scale', type=float, default= 0.8)
@@ -208,12 +71,9 @@ def get_args():
     parser.add_argument('--model', default='slot_vit_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--tubelet_size', type=int, default= 2)
-    # aggregation에서 query softmax후 key도 softmax로 norm, defualt는 l1 norm임 
-    parser.add_argument('--key_softmax', type=int, default=-1)
-    parser.add_argument('--no_label', action='store_true', default=False)
     #scene, action head type
     parser.add_argument('--head_type', type=str, default= 'linear')
-    parser.add_argument('--fusion', type=str, default='matching',choices=['hard_select','attention', 'weightedsum','matching','matching_hard'])
+    parser.add_argument('--slot_matching_method', type=str, default='matching', choices=['matching'])
     parser.add_argument('--input_size', default=224, type=int,
                         help='videos input size')
 
@@ -225,8 +85,6 @@ def get_args():
                         help='Attention dropout rate (default: 0.)')
     parser.add_argument('--drop_path', type=float, default=0.1, metavar='PCT',
                         help='Drop path rate (default: 0.1)')
-    parser.add_argument('--slicing', action='store_true', default=False)
-    parser.add_argument('--residual', action='store_true', default=False)
     parser.add_argument('--disable_eval_during_finetuning', action='store_true', default=False)
     parser.add_argument('--model_ema', action='store_true', default=False)
     parser.add_argument('--model_ema_decay', type=float, default=0.9999, help='')
@@ -312,9 +170,6 @@ def get_args():
     parser.add_argument('--init_scale', default=0.001, type=float)
     parser.add_argument('--use_checkpoint', action='store_true')
     parser.set_defaults(use_checkpoint=False)
-    parser.add_argument('--use_mean_pooling', action='store_true')
-    parser.set_defaults(use_mean_pooling=True)
-    parser.add_argument('--use_cls', action='store_false', dest='use_mean_pooling')
 
     # Dataset parameters
     parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
@@ -328,10 +183,8 @@ def get_args():
     parser.add_argument('--num_segments', type=int, default= 1)
     parser.add_argument('--num_frames', type=int, default= 16)
     parser.add_argument('--sampling_rate', type=int, default= 4)
-    parser.add_argument('--data_set', default='HVU', choices=['HVU', 'Diving-48','Kinetics-400', 'SSV2', 'UCF101', 'HMDB51','image_folder'],
+    parser.add_argument('--data_set', default='HVU', choices=['HVU'],
                         type=str, help='dataset')
-    parser.add_argument('--hat_split', default='1', choices=['1', '2', '3'], type=str)
-    parser.add_argument('--hat_eval', action='store_true', help='test on HAT three splits at once')
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--log_dir', default=None,
@@ -503,11 +356,9 @@ def main(args, ds_init):
         use_checkpoint=args.use_checkpoint,
         init_scale=args.init_scale,
         num_latents=args.num_latents,
-        residual = args.residual,
         head_type=args.head_type,
-        fusion=args.fusion,
-        disentangle_criterion=args.disentangle_criterion,
-        weights_tie=args.weights_tie,
+        slot_matching_method=args.slot_matching_method,
+        agg_weights_tie=args.agg_weights_tie,
         agg_depth=args.agg_depth,
         num_scene_classes=HVU_NUM_SCENE_CLASSES
     )
@@ -680,12 +531,10 @@ def main(args, ds_init):
     else:
         criterion = torch.nn.CrossEntropyLoss()
 
-
     train_criterion = TrainLoss(
             criterion = criterion,
             scene_criterion=args.scene_criterion,
-            num_action_classes=args.nb_classes,
-            fusion=args.fusion,
+            slot_matching_method=args.slot_matching_method,
             mask_prediction_loss_weight=args.mask_prediction_loss_weight,
             mask_distill_loss_weight=args.mask_distill_loss_weight
     )
@@ -709,7 +558,7 @@ def main(args, ds_init):
             log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
             lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
             num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
-            mask_model=mask_model,args=args
+            mask_model=mask_model, args=args
         )
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
@@ -717,7 +566,7 @@ def main(args, ds_init):
                     args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                     loss_scaler=loss_scaler, epoch=epoch, model_ema=model_ema)
         if data_loader_val is not None:
-            test_stats = validation_one_epoch(data_loader_val, model, device,args)
+            test_stats = validation_one_epoch(data_loader_val, model, device)
             print(f"Accuracy of the network on the {len(dataset_val)} val videos: {test_stats['action_acc1']:.1f}%")
             if max_accuracy < test_stats["action_acc1"]:
                 max_accuracy = test_stats["action_acc1"]
@@ -742,7 +591,6 @@ def main(args, ds_init):
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
-    preds_file = os.path.join(args.output_dir, str(global_rank) + '.txt')
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))

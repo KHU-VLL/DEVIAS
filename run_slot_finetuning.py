@@ -4,7 +4,7 @@ import numpy as np
 import time
 import torch
 import torch.backends.cudnn as cudnn
-import json,math
+import json
 import os
 from functools import partial
 from pathlib import Path
@@ -15,7 +15,6 @@ from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
-import torch.distributed as dist
 
 from datasets import build_dataset
 from engine_for_slot import train_one_epoch, validation_one_epoch, final_test, merge, final_test_with_scene_label
@@ -45,7 +44,6 @@ def get_args():
     parser.add_argument('--run_scuba', action='store_true', default=False)
     parser.add_argument('--agg_weights_tie', default=False, action='store_true')
     parser.add_argument('--agg_depth', default=8, type=int)
-    parser.add_argument('--use_CLIP', action='store_true', default=False)
     parser.add_argument('--scene_model_path', default="", type=str)
 
     #FG_mask
@@ -56,12 +54,7 @@ def get_args():
     parser.add_argument('--mask_prediction_loss_weight', type=float, default= 3)
     parser.add_argument('--scene_loss_weight', type=float, default= 4000)
 
-    #DISENTANGLE
-    parser.add_argument('--attn_criterion', default='MSE', choices=['MSE','KL', 'CE'], type=str)
     parser.add_argument('--scene_criterion', default='KL', choices=['KL', 'CE'], type=str)
-    parser.add_argument('--use_adapter', action='store_true', default=False)
-    parser.add_argument('--subset', action='store_true', default=False)
-    #knn 할때 사용
     parser.add_argument('--nb_knn', default=[10, 20], nargs='+', type=int,
         help='Number of NN to use. 20 is usually working the best.')
     
@@ -75,11 +68,9 @@ def get_args():
     parser.add_argument('--model', default='slot_vit_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--tubelet_size', type=int, default= 2)
-    parser.add_argument('--key_softmax', type=int, default=-1)
-    parser.add_argument('--no_label', action='store_true', default=False)
     #scene, action head type
     parser.add_argument('--head_type', type=str, default= 'linear')
-    parser.add_argument('--slot_matching_method', type=str, default= 'matching', choices=['hard_select', 'attention', 'weightedsum', 'matching', 'matching_hard'])
+    parser.add_argument('--slot_matching_method', type=str, default= 'matching', choices=['hard_select', 'matching'])
     parser.add_argument('--input_size', default=224, type=int,
                         help='videos input size')
 
@@ -176,9 +167,6 @@ def get_args():
     parser.add_argument('--init_scale', default=0.001, type=float)
     parser.add_argument('--use_checkpoint', action='store_true')
     parser.set_defaults(use_checkpoint=False)
-    parser.add_argument('--use_mean_pooling', action='store_true')
-    parser.set_defaults(use_mean_pooling=True)
-    parser.add_argument('--use_cls', action='store_false', dest='use_mean_pooling')
 
     # Dataset parameters
     parser.add_argument('--data_path', default='./filelist/k400', type=str,
@@ -192,10 +180,12 @@ def get_args():
     parser.add_argument('--sampling_rate', type=int, default= 4)
     parser.add_argument('--data_set', default='Kinetics-400', choices=['SCUBA', 'Kinetics-HAT', 'UCF101-HAT', 'Kinetics-BG', 'UCF101-BG', 'Diving-48', 'Kinetics-400', 'SSV2', 'UCF101', 'HMDB51', 'image_folder'],
                         type=str, help='dataset')
+
     parser.add_argument('--hat_split', default='1', choices=['1', '2', '3'], type=str)
     parser.add_argument('--hat_eval', action='store_true', help='test on HAT three splits at once')
-    parser.add_argument('--hat_anno_path', default=None, type=str)
     parser.set_defaults(hat_eval=False)
+    parser.add_argument('--hat_anno_path', default="", type=str)
+
     parser.add_argument('--scuba_val', action='store_true')
     parser.set_defaults(scuba_val=False)
     parser.add_argument('--output_dir', default='',
@@ -348,10 +338,10 @@ def main(args, ds_init):
     if args.scuba_val :
         assert args.data_set in ["Kinetics-400", "UCF101"]
         anno_path = 'kinetics' if args.data_set == "Kinetics-400" else 'ucf101'
-        data_path = "kinetics-places" if args.data_set == "Kinetics-400" else 'ucf101-places/generated_videos'
+        data_path = "kinetics-vqgan" if args.data_set == "Kinetics-400" else 'ucf101-vqgan/generated_videos'
         args.data_set = 'SCUBA'
         args.data_path = os.path.join(os.getcwd(), 'filelist/scuba', anno_path)
-        args.data_prefix = os.path.join('/local_datasets/scuba', data_path)
+        args.data_prefix = os.path.join('your_scuba_dataset_root_dir', data_path)
     
         dataset_scuba_val, _ = build_dataset(is_train=False, test_mode=False, args=args)
         num_tasks = utils.get_world_size()
@@ -647,8 +637,8 @@ def main(args, ds_init):
         exit(0)
         
     if args.run_scuba:
-        run_scuba(model, args, final_test, merge, final_test_with_scene_label, scene_model)
-        # run_scuba(model, args, final_test, merge)     #! test only FG
+        # run_scuba(model, args, final_test, merge, final_test_with_scene_label, scene_model)
+        run_scuba(model, args, final_test, merge)     #! test only FG
         exit(0)
 
     print(f"Start training for {args.epochs} epochs")
@@ -667,7 +657,7 @@ def main(args, ds_init):
             log_writer=log_writer, start_steps=epoch * num_training_steps_per_epoch,
             lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
             num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
-            mask_model=mask_model,args=args
+            mask_model=mask_model, args=args
         )
         if args.output_dir and args.save_ckpt:
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
@@ -743,10 +733,6 @@ def main(args, ds_init):
 
     run_scuba(model, args, final_test, merge)
 
-    # model = model.float()
-    # scene_model = scene_model.float()
-    # run_knn(model,scene_model,args)
-   
 if __name__ == '__main__':
     opts, ds_init = get_args()
     if opts.output_dir:

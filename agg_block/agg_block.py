@@ -31,7 +31,6 @@ class AggregationBlock(nn.Module):
         query_type = 'learned',
         encoder_isab = False,
         first_order=False,
-        key_softmax=-1,
     ):
         """
         Args:
@@ -81,7 +80,7 @@ class AggregationBlock(nn.Module):
                 latent_dim, 
                 Attention(
                     latent_dim, input_dim,
-                    heads = 4, dim_head = 512, dropout = attn_dropout, more_dropout = more_dropout, xavier_init = xavier_init,key_softmax=key_softmax,
+                    heads = 4, dim_head = 512, dropout = attn_dropout, more_dropout = more_dropout, xavier_init = xavier_init
                 ), 
                 context_dim = input_dim)
         
@@ -118,7 +117,7 @@ class AggregationBlock(nn.Module):
             ret = self.slots_mu + self.slots_log_sigma.exp() * slots_init
         return ret
 
-    def forward(self, data, fg_slot=None, bg_slot=None, mask = None):
+    def forward(self, data):
         b, *axis, device = *data.shape, data.device
         assert len(axis) == self.input_axis, 'input data must have the right number of axis'
 
@@ -130,7 +129,7 @@ class AggregationBlock(nn.Module):
         x = self.get_queries(b).type_as(data)
 
         for i, (cross_attn, pn1, cross_ff, pn2) in enumerate(self.layers):
-            attn, sim = cross_attn(x, context = data, mask = mask, k_pos = pos, q_pos = None)
+            attn, sim = cross_attn(x, context = data, k_pos = pos, q_pos = None)
             x = attn + x
             x = pn1(x)
             x = cross_ff(x) + x

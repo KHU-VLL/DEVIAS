@@ -1,5 +1,3 @@
-import os
-import numpy as np
 import math
 import sys
 from typing import Iterable, Optional
@@ -7,23 +5,20 @@ import torch
 from mixup import Mixup
 from timm.utils import accuracy, ModelEma
 import utils
-from scipy.special import softmax
-import torch.nn.functional as F
-from torch import nn
-from einops import rearrange
-import csv
 
 from run_slot_finetuning_hvu import HVU_NUM_ACTION_CLASSES
 
 
 def train_class_batch(model,samples, action_targets, scene_targets, train_criterion, fg_mask=None):
     student_output = model(samples)
-    total_loss, output, loss_dict = train_criterion(model, student_output, action_targets, scene_targets, fg_mask=fg_mask)
+    total_loss, output, loss_dict = train_criterion(student_output, action_targets, scene_targets, fg_mask=fg_mask)
     return total_loss,output,loss_dict
+
 
 def get_loss_scale_for_deepspeed(model):
     optimizer = model.optimizer
     return optimizer.loss_scale if hasattr(optimizer, "loss_scale") else optimizer.cur_scale
+
 
 def train_one_epoch(model: torch.nn.Module, train_criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
@@ -37,7 +32,7 @@ def train_one_epoch(model: torch.nn.Module, train_criterion: torch.nn.Module,
     metric_logger.add_meter('min_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
 
     header = 'Epoch: [{}]'.format(epoch)
-    print_freq = 10
+    print_freq = 100
 
     if loss_scaler is None:
         model.zero_grad()
@@ -67,7 +62,7 @@ def train_one_epoch(model: torch.nn.Module, train_criterion: torch.nn.Module,
 
         if loss_scaler is None:
             if 'FAME' in str(mask_model):
-                samples, action_targets, scene_targets, masks = mask_model(samples, action_targets, scene_targets) # mask (bs,1,1,H,W)
+                samples, action_targets, scene_targets, masks = mask_model(samples, action_targets, scene_targets) # mask (bs, 1, 1, H, W)
                 samples = samples.half()
                 
             loss, output,loss_dict = train_class_batch(
@@ -77,7 +72,7 @@ def train_one_epoch(model: torch.nn.Module, train_criterion: torch.nn.Module,
             with torch.cuda.amp.autocast():
                 ### MASK
                 if 'FAME' in str(mask_model):
-                    samples, action_targets, scene_targets, masks = mask_model(samples, action_targets, scene_targets) # mask (bs,1,1,H,W)
+                    samples, action_targets, scene_targets, masks = mask_model(samples, action_targets, scene_targets) # mask (bs, 1, 1, H, W)
                 loss, output,loss_dict = train_class_batch(
                     model, samples, targets, train_criterion, fg_mask=masks)
 
@@ -159,7 +154,7 @@ def train_one_epoch(model: torch.nn.Module, train_criterion: torch.nn.Module,
 
 
 @torch.no_grad()
-def validation_one_epoch(data_loader, model, device,args):
+def validation_one_epoch(data_loader, model, device):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -174,17 +169,15 @@ def validation_one_epoch(data_loader, model, device,args):
         scene_targets = batch[2]
         videos = videos.to(device, non_blocking=True)
 
-
         action_targets = action_targets.to(device, non_blocking=True)
         scene_targets = scene_targets.to(device, non_blocking=True)
         batch_size = videos.shape[0]
-        scene_targets += 739
+        #! for unified_head
+        scene_targets += HVU_NUM_ACTION_CLASSES
 
         # compute output
         with torch.cuda.amp.autocast():
-            (fg_feat,bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions)= model(videos)
-            action_output = fg_logit
-            scene_output = bg_logit
+            _, (action_output, scene_output, attn), _ = model(videos)
             loss = criterion(action_output, action_targets)
 
         action_acc1, action_acc5 = accuracy(action_output, action_targets, topk=(1, 5))
@@ -208,7 +201,7 @@ def validation_one_epoch(data_loader, model, device,args):
 
 
 @torch.no_grad()
-def validation_action(data_loader, model, device,header='Val:'):
+def validation_action(data_loader, model, device, header='Val:'):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -228,9 +221,7 @@ def validation_action(data_loader, model, device,header='Val:'):
 
         # compute output
         with torch.cuda.amp.autocast():
-            (fg_feat, bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions)= model(videos)
-            action_output = fg_logit
-            scene_output = bg_logit
+            _, (action_output, scene_output, attn), _ = model(videos)
             loss = criterion(action_output, action_targets)
 
         action_acc1, action_acc5 = accuracy(action_output, action_targets, topk=(1, 5))
@@ -250,7 +241,7 @@ def validation_action(data_loader, model, device,header='Val:'):
 
 
 @torch.no_grad()
-def validation_scene(data_loader, model, device,header='Val:'):
+def validation_scene(data_loader, model, device, header='Val:'):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -266,13 +257,12 @@ def validation_scene(data_loader, model, device,header='Val:'):
         action_targets = action_targets.to(device, non_blocking=True)
         scene_targets = scene_targets.to(device, non_blocking=True)
         videos = videos.to(device, non_blocking=True)
+        #! for unified_head
         scene_targets += HVU_NUM_ACTION_CLASSES
 
         # compute output
         with torch.cuda.amp.autocast():
-            (fg_feat, bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions)= model(videos)
-            action_output = fg_logit
-            scene_output = bg_logit
+            _, (action_output, scene_output, attn), _ = model(videos)
             loss = criterion(action_output, action_targets)
 
         scene_acc1, scene_acc5 = accuracy(scene_output, scene_targets, topk=(1, 5))

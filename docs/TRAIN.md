@@ -45,9 +45,8 @@ OMP_NUM_THREADS=1 torchrun \
     --test_num_crop 3 \
     --dist_eval \
     --enable_deepspeed \
-    --num_latents 2 \
     --agg_block_scale 0.1 \
-    --fusion 'matching' \
+    --slot_matching_method 'matching' \
     --batch_size 12 \
     --head_type 'linear' \
     --mixup 0.0 \
@@ -60,7 +59,7 @@ OMP_NUM_THREADS=1 torchrun \
     --mask_distill_loss_weight 1.0 \
     --mask_prediction_loss_weight 1.0 \
     --num_latents 2 \
-    --weights_tie --agg_depth 8 \
+    --agg_weights_tie --agg_depth 8 \
     --scene_model_path $SCENE_MODEL_PATH
   ```
 
@@ -107,14 +106,17 @@ OMP_NUM_THREADS=1 torchrun \
     --test_num_crop 3 \
     --dist_eval \
     --enable_deepspeed \
-    --num_latents 2 \
     --agg_block_scale 0.1 \
-    --fusion 'matching' \
+    --slot_matching_method 'matching' \
     --batch_size 12 \
     --head_type 'linear' \
     --mixup 0.0 \
     --cutmix 0.0 \
     --reprob 0.0 \
+    --fc_drop_rate 0.5 \
+    --drop_path 0.2 \
+    --warmup_lr 1e-8 \
+    --min_lr 1e-5 \
     --num_workers 8 \
     --mask_model FAME \
     --beta 0.3 \
@@ -122,6 +124,60 @@ OMP_NUM_THREADS=1 torchrun \
     --mask_distill_loss_weight 1.0 \
     --mask_prediction_loss_weight 1.0 \
     --num_latents 2 \
-    --weights_tie --agg_depth 4 \
+    --agg_weights_tie --agg_depth 4 \
     --scene_model_path $SCENE_MODEL_PATH
   ```
+
+
+## Train on HVU
+
+```bash
+NUM_GPUS=8
+MASTER_PORT=36524
+OUTPUT_DIR='YOUR_PATH/work_dir/train_hvu'
+DATA_PATH='YOUR_PATH/filelist/hvu'
+DATA_PREFIX='YOUR_PATH/HVU'
+MODEL_PATH='YOUR_PATH/ckpt/videomae_400_weights.pth'
+
+OMP_NUM_THREADS=1 torchrun \
+    --nproc_per_node=$NUM_GPUS \
+    --master_port=$MASTER_PORT \
+    run_slot_finetuning_hvu.py \
+    --model slot_vit_base_patch16_224 \
+    --data_set HVU \
+    --nb_classes 739 \
+    --data_path $DATA_PATH \
+    --data_prefix $DATA_PREFIX \
+    --finetune $MODEL_PATH \
+    --log_dir $OUTPUT_DIR \
+    --output_dir $OUTPUT_DIR \
+    --input_size 224 \
+    --short_side_size 224 \
+    --save_ckpt_freq 50 \
+    --num_frames 16 \
+    --sampling_rate 4 \
+    --num_sample 1 \
+    --opt adamw \
+    --lr 5e-4 \
+    --opt_betas 0.9 0.999 \
+    --weight_decay 0.05 \
+    --epochs 50 \
+    --test_num_segment 1 \
+    --test_num_crop 1 \
+    --dist_eval \
+    --enable_deepspeed \
+    --agg_block_scale 0.1 \
+    --slot_matching_method 'matching' \
+    --batch_size 12 \
+    --head_type 'linear' \
+    --mixup 0.0 \
+    --cutmix 0.0 \
+    --reprob 0.0 \
+    --num_workers 8 \
+    --mask_model FAME \
+    --beta 0.5 \
+    --prob_aug 0.25 \
+    --mask_distill_loss_weight 1.0 \
+    --mask_prediction_loss_weight 1.0 \
+    --num_latents 2 \
+    --agg_weights_tie --agg_depth 8 

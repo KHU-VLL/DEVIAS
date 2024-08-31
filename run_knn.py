@@ -3,10 +3,9 @@ import os
 import torch.distributed as dist
 
 from datasets import knn_build_dataset
-from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
 import torch.nn as nn
-from kinetics import VideoClsDataset, VideoMAE
+from kinetics import VideoClsDataset
 
 
 class ReturnIndexVideoClsDataset(VideoClsDataset):
@@ -14,7 +13,6 @@ class ReturnIndexVideoClsDataset(VideoClsDataset):
         # call __getitem__ from original VideoClsDataset
         data = super(ReturnIndexVideoClsDataset, self).__getitem__(idx)
         
-        # train 모드에 따라 다르게 반환
         if self.mode == 'train':
             buffer, label, _, index = data
             return buffer, label, index
@@ -28,7 +26,7 @@ class ReturnIndexVideoClsDataset(VideoClsDataset):
 
 
 @torch.no_grad()
-def extract_features(model,scene_model, data_loader, use_cuda=True, multiscale=False):
+def extract_features(model, scene_model, data_loader, multiscale=False):
     metric_logger = utils.MetricLogger(delimiter="  ")
     action_features = None
     scene_features = None
@@ -42,19 +40,21 @@ def extract_features(model,scene_model, data_loader, use_cuda=True, multiscale=F
         if multiscale:
             feats = utils.multi_scale(samples, model)
         else:
-            #! for slot model
-            (fg_feat, bg_feat), (fg_logit, bg_logit, _),(slots_head, slots)  = model(samples)
-            #! for disentangle model
-            (fg_feat, action_logit), (bg_feat, scene_logit) = model(samples)
-        
-            action_feats = fg_feat
-            scene_feats = bg_feat
+            output = model(samples)
+            if len(output) == 2 :
+                #! for multi-task baseline
+                (action_feats, action_logit), (scene_feats, scene_logit) = model(samples)
+            elif len(output) == 3 :
+                #! for ours using slots
+                (action_feats, scene_feats), _, _  = model(samples)
+            
             action_feats = action_feats.clone()
             scene_feats = scene_feats.clone()
             with torch.no_grad():
                 _, teacher_scene_logit = scene_model(samples,return_attn=False)
                 scene_target = torch.argmax(teacher_scene_logit, dim=1).float()
                 scene_target = scene_target.clone()
+
         # init storage feature matrix
         if dist.get_rank() == 0 and action_features is None and scene_features is None and scene_targets is None:
             action_features = torch.zeros(len(data_loader.dataset), action_feats.shape[-1])
@@ -163,14 +163,14 @@ def knn_classifier(train_features, train_labels, test_features, test_labels, k, 
     return top1, top5
 
 
-def run_knn(model,scene_model,args):
+def run_knn(model, scene_model, args):
     model.eval()
     scene_model.eval()
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
-    for data_set,data_path in zip(['HMDB51','UCF101','Diving-48'],['filelist/hmdb51','filelist/ucf101','filelist/diving48']):
-        args.data_set =data_set
-        args.data_path =data_path
+    for data_set,data_path in zip(['HMDB51', 'UCF101', 'Diving-48'], ['filelist/hmdb51','filelist/ucf101','filelist/diving48']):
+        args.data_set = data_set
+        args.data_path = data_path
         print(f'KNN {data_set} Start')
 
         dataset_train, args.nb_classes = knn_build_dataset(is_train=True,  args=args)
@@ -203,9 +203,9 @@ def run_knn(model,scene_model,args):
 
         # ============ extract features ... ============
         print("Extracting features for train set...")
-        train_action_features,train_scene_features,train_scene_targets = extract_features(model,scene_model, data_loader_train)
+        train_action_features,train_scene_features,train_scene_targets = extract_features(model, scene_model, data_loader_train)
         print("Extracting features for val set...")
-        test_action_features,test_scene_features,test_scene_targets = extract_features(model,scene_model, data_loader_val)
+        test_action_features,test_scene_features,test_scene_targets = extract_features(model, scene_model, data_loader_val)
 
         if utils.get_rank() == 0:
             train_action_features = nn.functional.normalize(train_action_features, dim=1, p=2)

@@ -19,15 +19,6 @@ def _cfg(url='', **kwargs):
         **kwargs
     }
 
-class GradientReversalLayer(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output.neg()
-    
 
 class MLPHead(nn.Module):
     def __init__(self, in_dim, out_dim, hidden_dim):
@@ -41,42 +32,6 @@ class MLPHead(nn.Module):
         x = self.fc2(x)
         return x
     
-class DropPath(torch.nn.Module):
-    def __init__(self, drop_prob=0.0):
-        super(DropPath, self).__init__()
-        self.drop_prob = drop_prob
-
-    def forward(self, x):
-        if self.training and self.drop_prob > 0.0:
-            keep_prob = 1.0 - self.drop_prob
-            shape = (x.shape[0],) + (1,) * (x.ndim - 1)  # Only drop paths for the batch dimension
-            random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-            random_tensor.floor_()  # binarize
-            output = x.div(keep_prob) * random_tensor
-            return output
-        return x
-
-
-class Adapter(nn.Module):
-    def __init__(self, D_features, mlp_ratio=0.25, act_layer=nn.GELU, skip_connect=True):
-        super().__init__()
-        self.skip_connect = skip_connect
-        D_hidden_features = int(D_features * mlp_ratio)
-        self.act = act_layer()
-        self.D_fc1 = nn.Linear(D_features, D_hidden_features)
-        self.D_fc2 = nn.Linear(D_hidden_features, D_features)
-        
-    def forward(self, x):
-        # x is (B, TN, D)
-        xs = self.D_fc1(x)
-        xs = self.act(xs)
-        xs = self.D_fc2(xs)
-        if self.skip_connect:
-            x = x + xs
-        else:
-            x = xs
-        return x
-
 
 class DropPath(nn.Module):
     """Drop paths (Stochastic Depth) per sample  (when applied in main path of residual blocks).
@@ -142,7 +97,7 @@ class Attention(nn.Module):
         qkv_bias = None
         if self.q_bias is not None:
             qkv_bias = torch.cat((self.q_bias, torch.zeros_like(self.v_bias, requires_grad=False), self.v_bias))
-        # qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+
         qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
         qkv = qkv.reshape(B, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
@@ -161,50 +116,6 @@ class Attention(nn.Module):
             return x, attn
         return x
 
-class ResidualAttentionBlock(nn.Module):
-    '''
-    https://github.com/taoyang1122/adapt-image-models/blob/28807779bbc5761765f47d5011c3b43a5c9721d8/mmaction/models/backbones/vit_clip.py#L48C7-L48C29
-    '''
-    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                 attn_head_dim=None):
-        super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = Attention(
-            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            attn_drop=attn_drop, proj_drop=drop, attn_head_dim=attn_head_dim)
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-
-        if init_values > 0:
-            self.gamma_1 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
-            self.gamma_2 = nn.Parameter(init_values * torch.ones((dim)),requires_grad=True)
-        else:
-            self.gamma_1, self.gamma_2 = None, None
-
-
-
-        self.MLP_Adapter = Adapter(dim, skip_connect=False)
-        self.Adapter = Adapter(dim)
-        #adapter scale
-        self.scale = 0.5
-
-    def forward(self, x,return_attn=True):
-        if return_attn:
-            #adapter todo
-            new_x,attn = self.attn(self.norm1(x),return_attn)
-            x = x + self.drop_path(new_x)
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
-            return x, attn
-
-        else:
-            x = x + self.Adapter(self.attn(self.norm1(x)))
-            xn = self.norm2(x)
-            x = x + self.mlp(xn) + self.drop_path(self.scale * self.MLP_Adapter(xn))
-            return x
 
 class Block(nn.Module):
 
@@ -228,7 +139,7 @@ class Block(nn.Module):
         else:
             self.gamma_1, self.gamma_2 = None, None
 
-    def forward(self, x,return_attn=True):
+    def forward(self, x, return_attn=True):
         if return_attn:
             new_x,attn = self.attn(self.norm1(x),return_attn)
             x = x + self.drop_path(new_x)
@@ -303,24 +214,10 @@ class MaskPredictor(nn.Module):
         
     def forward(self, cls_token):
         
-        width = 14
+        width = 14   #! for ViT-B/16 with input size (224, 224)
         
         #! MLP
         mask = self.decoder(cls_token)
-        
-        #! CNN
-        # cls_features = torch.tile(cls_token.unsqueeze(-1).unsqueeze(-1), (width, width))
-        # x = torch.linspace(-1, 1, steps=width).to(cls_features.device)
-        # y = torch.linspace(-1, 1, steps=width).to(cls_features.device)
-        # x,y = torch.meshgrid(x, y, indexing='ij')
-        # x=x.unsqueeze(0).unsqueeze(0).repeat(cls_token.shape[0],1,1,1).half()
-        # y=y.unsqueeze(0).unsqueeze(0).repeat(cls_token.shape[0],1,1,1).half()
-        # cls_features = torch.cat((cls_features, x, y), dim=1)
-        # cls_features = self.act(self.conv1(cls_features))
-        # cls_features = self.act(self.conv2(cls_features))
-        # cls_features = self.act(self.conv3(cls_features))
-        # cls_features = self.act(self.conv4(cls_features))
-        # mask = torch.sigmoid(self.conv5(cls_features))
 
         return mask.squeeze().reshape(cls_token.shape[0],width*width)  # Remove extra dimension for [batch, 14, 14]
 
@@ -350,10 +247,9 @@ class VisionTransformer(nn.Module):
                  all_frames=16,
                  tubelet_size=2,
                  use_checkpoint=False,
-                 use_mean_pooling=True,
                  num_latents=4,
                  head_type='linear',
-                 slot_matching='hard_select',
+                 slot_matching_method='hard_select',
                  num_scene_classes=365,
                  agg_weights_tie=False,
                  agg_depth=4
@@ -369,27 +265,17 @@ class VisionTransformer(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim, num_frames=all_frames, tubelet_size=self.tubelet_size)
         num_patches = self.patch_embed.num_patches
         self.use_checkpoint = use_checkpoint
-        if not use_mean_pooling:
-            self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-            trunc_normal_(self.cls_token, std=.02)
-            num_patches += 1
             
-        self.slot_matching = slot_matching
+        self.slot_matching_method = slot_matching_method
         self.head_type = head_type
         self.select_slots_info = [[0,0] for i in range(self.num_slots)]
 
-        if slot_matching =='hard_select':
+        if slot_matching_method =='hard_select':
             pass
-        elif slot_matching =='weightedsum':
-            self.weights = nn.Parameter(torch.ones(num_latents - 1))
-        elif slot_matching =='attention':
-            pass
-        elif slot_matching =='matching':
-            pass
-        elif slot_matching =='matching_hard':
+        elif slot_matching_method =='matching':
             pass
         else:
-            raise ValueError("incorrent slot_matching")
+            raise ValueError("incorrent slot_matching_method")
 
         if use_learnable_pos_emb:
             self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
@@ -408,7 +294,6 @@ class VisionTransformer(nn.Module):
                 init_values=init_values)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
-        self.fc_norm =  norm_layer(embed_dim)
         self.fc_dropout = nn.Dropout(p=fc_drop_rate) if fc_drop_rate > 0 else nn.Identity()
 
         print(f"Aggregation blocks {agg_weights_tie} depth {agg_depth}")
@@ -418,16 +303,16 @@ class VisionTransformer(nn.Module):
 
         if use_learnable_pos_emb:
             trunc_normal_(self.pos_embed, std=.02)
+
         if head_type == 'linear':
-            self.head = nn.Linear(embed_dim, num_classes+self.num_scene_classes) if num_classes > 0 else nn.Identity()
+            self.head = nn.Linear(embed_dim, num_classes + self.num_scene_classes) if num_classes > 0 else nn.Identity()
             trunc_normal_(self.head.weight, std=.02)
             self.apply(self._init_weights)
             self.head.weight.data.mul_(init_scale)
             self.head.bias.data.mul_(init_scale)
-            print(self.head.weight.data.shape)
         else:
             #mlp
-            self.head = MLPHead(embed_dim, num_classes+self.num_scene_classes) if num_classes > 0 else nn.Identity()
+            self.head = MLPHead(embed_dim, num_classes + self.num_scene_classes, hidden_dim=512) if num_classes > 0 else nn.Identity()
 
             trunc_normal_(self.head.fc1.weight, std=.02)
             trunc_normal_(self.head.fc2.weight, std=.02)
@@ -481,62 +366,34 @@ class VisionTransformer(nn.Module):
         if self.use_checkpoint:
             for blk in self.blocks:
                 x= checkpoint.checkpoint(blk, x)
-                # attn_list.append(attn)
 
         else:  
             if return_attn: 
                 for blk in self.blocks:
-                    x, attn = blk(x,return_attn=return_attn)
+                    x, attn = blk(x, return_attn=return_attn)
                     attn_list.append(attn)
             else:
                 for blk in self.blocks:
-                    x = blk(x,return_attn=return_attn)
+                    x = blk(x, return_attn=return_attn)
                 
         x = self.norm(x)
-        return x
+        if return_attn :
+            return x, attn_list
+        else :
+            return x
 
-
-    def forward(self, x,return_attn=False):
-        x = self.forward_features(x,return_attn)
-        #TODO token merging
+    def forward(self, x, return_attn=False):
+        x = self.forward_features(x, return_attn)
         slots, attn = self.agg_block(x)  
 
-        # hard select
-        if self.slot_matching == 'hard_select':
-            bg_feat = slots[:,0]
-            fg_feat = slots[:,1]
-            fg_logit = self.head(self.fc_dropout(fg_feat))
-            bg_logit = self.head(self.fc_dropout(bg_feat))
-            return (fg_feat,bg_feat), (fg_logit,bg_logit),([],[])
+        if self.slot_matching_method == 'hard_select':
+            action_feat = slots[:, 0]
+            scene_feat = slots[:, 1]
+            action_logit = self.head(self.fc_dropout(action_feat))
+            scene_logit = self.head(self.fc_dropout(scene_feat))
+            return (action_feat, scene_feat), (action_logit, scene_logit, []), ([], [], [])
 
-        #weight sum
-        elif self.slot_matching == 'weightedsum':
-            bs, n, _ = slots.size()
-            weights = self.weights.unsqueeze(0).expand(bs, -1)
-            # weights = weights / weights.sum(dim=1, keepdim=True)  # Normalize weights to sum to 1
-            scale = 0.4
-            weights = F.softmax(weights * scale, dim=1)
-
-            fg_feat = slots[:,0]
-            bg_feat = (weights.unsqueeze(2) * slots[:,1:4,:]).sum(dim=1)
-            
-        elif self.slot_matching == 'matching_hard':
-            bs, num_slots, _ = slots.size()
-            slots = slots.reshape(-1, 768)
-            slots_head = self.head(self.fc_dropout(slots))
-            
-            slot_probs = F.softmax(slots_head, dim=-1).view(bs, num_slots, -1)
-            scene_softmax_output = slot_probs[:,1:, self.num_classes:self.num_classes+self.num_scene_classes]
-            scene_max_slot_indices = torch.argmax(scene_softmax_output.max(dim=-1).values, dim=1)
-            scene_max_slot_indices += 1
-            fg_feat = slots[:,0]
-            fg_logit = slot_probs[:,0]
-            bg_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
-            bg_logit = slots_head.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
-           
-            return (fg_feat,bg_feat), (fg_logit,bg_logit),(slots_head,slots)
-
-        elif self.slot_matching == 'matching':
+        elif self.slot_matching_method == 'matching':
             bs, num_slots, _ = slots.size()
             slots = slots.reshape(-1, 768)
             slots_head = self.head(self.fc_dropout(slots))
@@ -549,17 +406,17 @@ class VisionTransformer(nn.Module):
             action_max_slot_indices = torch.argmax(action_softmax_output.max(dim=-1).values, dim=1)
             scene_max_slot_indices = torch.argmax(scene_softmax_output.max(dim=-1).values, dim=1)
 
-            fg_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), action_max_slot_indices]
-            bg_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
-            fg_logit = slots_head.view(bs, num_slots, -1)[torch.arange(bs), action_max_slot_indices]
-            bg_logit = slots_head.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
+            action_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), action_max_slot_indices]
+            scene_feat = slots.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
+            action_logit = slots_head.view(bs, num_slots, -1)[torch.arange(bs), action_max_slot_indices]
+            scene_logit = slots_head.view(bs, num_slots, -1)[torch.arange(bs), scene_max_slot_indices]
             
             mask_predictions = self.mask_predictor(slots)
            
-            return (fg_feat, bg_feat), (fg_logit, bg_logit, attn), (slots_head, slots, mask_predictions)
+            return (action_feat, scene_feat), (action_logit, scene_logit, attn), (slots_head, slots, mask_predictions)
 
         else:
-            raise ValueError('slot_matching error')
+            raise ValueError('slot_matching_method error')
 
 
 @register_model

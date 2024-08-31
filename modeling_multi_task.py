@@ -75,12 +75,12 @@ class Attention(nn.Module):
         self.proj = nn.Linear(all_head_dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x,return_attn=False):
+    def forward(self, x, return_attn=False):
         B, N, C = x.shape
         qkv_bias = None
         if self.q_bias is not None:
             qkv_bias = torch.cat((self.q_bias, torch.zeros_like(self.v_bias, requires_grad=False), self.v_bias))
-        # qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+
         qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
         qkv = qkv.reshape(B, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
@@ -95,6 +95,7 @@ class Attention(nn.Module):
         x = (attn @ v).transpose(1, 2).reshape(B, N, -1)
         x = self.proj(x)
         x = self.proj_drop(x)
+
         if return_attn:
             return x, attn
         return x
@@ -199,8 +200,6 @@ class VisionTransformer(nn.Module):
                  all_frames=16,
                  tubelet_size=2,
                  use_checkpoint=False,
-                 slicing=False,
-                 use_mean_pooling=False,
                  unified_head=False,
                  num_scene_classes=365
                  ):
@@ -219,7 +218,6 @@ class VisionTransformer(nn.Module):
         num_patches += 1
         trunc_normal_(self.cls_token, std=.02)
 
-        use_mean_pooling = False
         self.scene_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         num_patches += 1
         trunc_normal_(self.scene_token, std=.02)
@@ -245,9 +243,8 @@ class VisionTransformer(nn.Module):
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
         
-        # self.norm = nn.Identity() 
-        # self.fc_norm = norm_layer(embed_dim)
         self.fc_dropout = nn.Dropout(p=fc_drop_rate) if fc_drop_rate > 0 else nn.Identity()
+        
         if self.unified_head :
             self.head = nn.Linear(embed_dim, num_classes+self.num_scene_classes) if num_classes > 0 else nn.Identity()
         else :            
@@ -284,7 +281,7 @@ class VisionTransformer(nn.Module):
 
     @torch.jit.ignore
     def no_weight_decay(self):
-        return {'pos_embed', 'cls_token','scene_token'}
+        return {'pos_embed', 'cls_token', 'scene_token'}
 
     def get_classifier(self):
         return self.head
@@ -324,17 +321,17 @@ class VisionTransformer(nn.Module):
         return x[:, 0], x[:, -1], attn_list #action, scene
 
 
-    def forward(self, x,return_attn=False):
-        action_token, scene_token, attn_list = self.forward_features(x,return_attn)
+    def forward(self, x, return_attn=False):
+        action_token, scene_token, attn_list = self.forward_features(x, return_attn)
         action_x = self.head(self.fc_dropout(action_token))
         if not self.unified_head :
             scene_x = self.scene_head(self.fc_dropout(scene_token))
         else :
             scene_x = self.head(self.fc_dropout(scene_token))
         if return_attn:
-            return (action_token,action_x),(scene_token,scene_x), attn_list
+            return (action_token, action_x), (scene_token, scene_x), attn_list
         else:
-            return (action_token,action_x),(scene_token,scene_x)
+            return (action_token, action_x), (scene_token, scene_x)
 
 
 @register_model

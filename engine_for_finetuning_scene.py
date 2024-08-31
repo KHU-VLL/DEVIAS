@@ -21,13 +21,14 @@ def get_loss_scale_for_deepspeed(model):
     return optimizer.loss_scale if hasattr(optimizer, "loss_scale") else optimizer.cur_scale
 
 
-def train_one_epoch(model: torch.nn.Module,scene_model: torch.nn.Module, criterion: torch.nn.Module,
+def train_one_epoch(model: torch.nn.Module, scene_model: torch.nn.Module, criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
                     model_ema: Optional[ModelEma] = None, mixup_fn: Optional[Mixup] = None, log_writer=None,
                     start_steps=None, lr_schedule_values=None, wd_schedule_values=None,
                     num_training_steps_per_epoch=None, update_freq=None):
     model.train(True)
+    scene_model.eval()
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('min_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
@@ -167,7 +168,6 @@ def validation_one_epoch(data_loader, model,scene_model, device):
                 target = torch.argmax(teacher_scene_logit, dim=1)
                 target = target.to(device, non_blocking=True)
 
-
         # compute output
         with torch.cuda.amp.autocast():
             _, output = model(videos)
@@ -189,7 +189,7 @@ def validation_one_epoch(data_loader, model,scene_model, device):
 
 
 @torch.no_grad()
-def final_test(data_loader, model,scene_model, device, file):
+def final_test(data_loader, model, scene_model, device, file):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -213,11 +213,9 @@ def final_test(data_loader, model,scene_model, device, file):
                 target = torch.argmax(teacher_scene_logit, dim=1)
                 target = target.to(device, non_blocking=True)
 
-
-
         # compute output
         with torch.cuda.amp.autocast():
-            _,output = model(videos)
+            _, output = model(videos)
             loss = criterion(output, target)
 
         for i in range(output.size(0)):
@@ -234,6 +232,7 @@ def final_test(data_loader, model,scene_model, device, file):
         metric_logger.update(loss=loss.item())
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
         metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+        
     if not os.path.exists(file):
         os.mknod(file)
     with open(file, 'w') as f:

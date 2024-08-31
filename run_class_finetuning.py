@@ -150,7 +150,8 @@ def get_args():
     
     parser.add_argument('--hat_eval', action='store_true')
     parser.add_argument('--hat_split', default='1', choices=['1', '2', '3'], type=str)
-    parser.add_argument('--hat_anno_path', default=None, type=str)
+    parser.add_argument('--hat_anno_path', default="", type=str)
+
     parser.add_argument('--nb_classes', default=400, type=int,
                         help='number of the classification types')
     parser.add_argument('--imagenet_default_mean_and_std', default=True, action='store_true')

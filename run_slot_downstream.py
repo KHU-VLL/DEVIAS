@@ -20,7 +20,7 @@ from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValu
 from datasets import build_dataset
 from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
 from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate
+from utils import multiple_samples_collate
 import utils
 import modeling_slot_fusion
 
@@ -36,13 +36,14 @@ def get_args():
     parser.add_argument('--epochs', default=30, type=int)
     parser.add_argument('--update_freq', default=1, type=int)
     parser.add_argument('--save_ckpt_freq', default=100, type=int)
-    parser.add_argument('--slot_fusion', default='concat', choices=['backbone', 'concat', 'sum', 'fg_only', 'bg_only'], type=str)
+    parser.add_argument('--slot_fusion_method', default='concat', choices=['gap', 'concat'], type=str)
     parser.add_argument('--downstream_nb_classes', default=400, type=int)
     parser.add_argument('--num_latents', type=int, default= 4, help='num slots')
     parser.add_argument('--head_type', type=str, default= 'linear')
     parser.add_argument('--agg_weights_tie', default=False, action='store_true')
     parser.add_argument('--agg_depth', default=8, type=int)
     parser.add_argument('--agg_block_scale', type=float, default= 0.8)
+    parser.add_argument('--use_input_ln', default=False, action='store_true')
     
     # Model parameters
     parser.add_argument('--model', default='vit_base_patch16_224', type=str, metavar='MODEL',
@@ -160,7 +161,7 @@ def get_args():
     parser.add_argument('--num_segments', type=int, default= 1)
     parser.add_argument('--num_frames', type=int, default= 16)
     parser.add_argument('--sampling_rate', type=int, default= 4)
-    parser.add_argument('--data_set', default='Kinetics-400', choices=['Diving-48', 'Kinetics-400', 'SSV2', 'UCF101', 'HMDB51', 'image_folder'],
+    parser.add_argument('--data_set', default='Kinetics-400', choices=['Diving-48', 'Kinetics-400', 'ActivityNet', 'SSV2', 'UCF101', 'HMDB51', 'image_folder'],
                         type=str, help='dataset')
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -333,8 +334,9 @@ def main(args, ds_init):
         agg_weights_tie=args.agg_weights_tie,
         agg_depth=args.agg_depth,
         num_scene_classes=365,
-        slot_fusion=args.slot_fusion,
-        downstream_nb_classes=args.downstream_nb_classes
+        slot_fusion_method=args.slot_fusion_method,
+        downstream_nb_classes=args.downstream_nb_classes,
+        use_input_ln=args.use_input_ln
     )
 
     print("Turning parameters")

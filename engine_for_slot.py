@@ -47,21 +47,12 @@ def segformer_mix_sample(mask , videos,label,args):
     return all_videos, all_label,(random_mask,masks_per_frame)
 
 
-def multi_slot_accuracy(slots_head, target):
-    bs = target.size(0)
-    slots_head = rearrange(slots_head, '(b n) d -> b n d',b=bs)  
-    predicted = torch.argmax(slots_head, dim=-1)  # bs x n
-    expanded_target = target.unsqueeze(1).expand_as(predicted) # bs x n 
-    correct = (predicted == expanded_target).any(dim=1).float()  
-    return correct.mean().item() * 100 
-
-
 def train_class_batch(model, scene_model,samples, target, train_criterion, fg_mask=None):
     student_output = model(samples)
     with torch.no_grad():
         teacher_output = scene_model(samples,return_attn=False)
         
-    total_loss,output,loss_dict = train_criterion(model, student_output,teacher_output, target, fg_mask=fg_mask)
+    total_loss, output, loss_dict = train_criterion(model, student_output,teacher_output, target, fg_mask=fg_mask)
     return total_loss,output,loss_dict
 
 
@@ -113,7 +104,7 @@ def train_one_epoch(model: torch.nn.Module,scene_model: torch.nn.Module, train_c
 
         if loss_scaler is None:
             if 'FAME' in str(mask_model):
-                samples, targets, masks = mask_model(samples, targets) # mask (bs,1,1,H,W)
+                samples, targets, masks = mask_model(samples, targets) # mask (bs, 1, 1, H, W)
                 samples = samples.half()
                 
             elif 'Segformer' in str(mask_model):
@@ -242,21 +233,18 @@ def validation_one_epoch(data_loader, model, device,args):
 
         # compute output
         with torch.cuda.amp.autocast():
-            (fg_feat, bg_feat), (fg_logit, bg_logit, attn),(slots_head, slots, mask_predictions)= model(videos)
-            output = fg_logit
+            _, (output, scene_output, attn), _ = model(videos)
             loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
-        multi_slot_acc = multi_slot_accuracy(slots_head, target)
         
         metric_logger.update(loss=loss.item())
-        metric_logger.meters['multi_slot_acc'].update(multi_slot_acc, n=batch_size)
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
         metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
         
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} MultiSlotAcc {multi_slot_acc.global_avg:.3f} loss {losses.global_avg:.3f}'
+    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
         .format(top1=metric_logger.acc1, top5=metric_logger.acc5,
                 multi_slot_acc=metric_logger.multi_slot_acc, 
                 losses=metric_logger.loss,
@@ -287,8 +275,7 @@ def final_test(data_loader, model, device, file):
 
         # compute output
         with torch.cuda.amp.autocast():
-            (fg_feat, bg_feat), (fg_logit, bg_logit, attn),(slots_head, slots, mask_predictions) = model(videos)
-            output = fg_logit
+            _, (output, scene_output, attn), _ = model(videos)
             loss = criterion(output, target)
 
         for i in range(output.size(0)):
@@ -334,17 +321,14 @@ def final_test_with_scene_label(data_loader, model, scene_model, device, file, n
     
     for batch in metric_logger.log_every(data_loader, 100, header):
         videos = batch[0]
-        # target = batch[1]
         ids = batch[2]
         chunk_nb = batch[3]
         split_nb = batch[4]
         videos = videos.to(device, non_blocking=True)
-        # target = target.to(device, non_blocking=True)
 
         # compute output
         with torch.cuda.amp.autocast():
-            (fg_feat, bg_feat), (fg_logit,bg_logit, attn),(slots_head, slots, mask_predictions) = model(videos)
-            output = bg_logit  
+            _, (action_output, output, attn), _ = model(videos)
             output = output[:, num_labels:]  #! for unified head
             
             #! get scene label from teacher

@@ -8,25 +8,23 @@ from mixup import Mixup
 from timm.utils import accuracy, ModelEma
 import utils
 from scipy.special import softmax
-import torch.nn.functional as F
-from torch import nn
-
 
 
 def train_class_batch(model, scene_model,samples, target, train_criterion):
-    student_output = model(samples,return_attn=False)
+    student_output = model(samples, return_attn=False)
     with torch.no_grad():
-        teacher_output = scene_model(samples,return_attn=False)
+        teacher_output = scene_model(samples, return_attn=False)
 
-    total_loss, output, loss_dict = train_criterion(student_output,teacher_output, target)
+    total_loss, output, loss_dict = train_criterion(student_output, teacher_output, target)
     return total_loss,output,loss_dict
+
 
 def get_loss_scale_for_deepspeed(model):
     optimizer = model.optimizer
     return optimizer.loss_scale if hasattr(optimizer, "loss_scale") else optimizer.cur_scale
 
 
-def train_one_epoch(model: torch.nn.Module,scene_model: torch.nn.Module, train_criterion: torch.nn.Module,
+def train_one_epoch(model: torch.nn.Module, scene_model: torch.nn.Module, train_criterion: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,
                     device: torch.device, epoch: int, loss_scaler, max_norm: float = 0,
                     model_ema: Optional[ModelEma] = None, mixup_fn: Optional[Mixup] = None, log_writer=None,
@@ -261,7 +259,6 @@ def final_test_with_scene_label(data_loader, model, scene_model, device, file, n
         chunk_nb = batch[3]
         split_nb = batch[4]
         videos = videos.to(device, non_blocking=True)
-        # target = target.to(device, non_blocking=True)
 
         # compute output
         with torch.cuda.amp.autocast():

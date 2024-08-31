@@ -9,7 +9,7 @@ import numpy as np
 from timm.utils import get_state_dict
 from torch.utils.data._utils.collate import default_collate
 from pathlib import Path
-import subprocess
+import sys
 import torch
 import torch.distributed as dist
 from torch import inf

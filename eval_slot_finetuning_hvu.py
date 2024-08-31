@@ -24,8 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import random
 
-HVU_NUM_ACTION_CLASSES = 739
-HVU_NUM_SCENE_CLASSES = 248
+from run_slot_finetuning_hvu import HVU_NUM_ACTION_CLASSES, HVU_NUM_SCENE_CLASSES
 
 #!!!!!!!!!!!!!!!!!!!!!!!!!!
 #! code for only evaluation on HVU
@@ -38,32 +37,18 @@ def print_requires_grad_parameters(model):
 def get_args():
     parser = argparse.ArgumentParser('VideoMAE fine-tuning and evaluation script for video classification', add_help=False)
     parser.add_argument('--batch_size', default=64, type=int)
+    parser.add_argument('--anno_path', default=[], nargs='+', type=str,
+        help='Need 2 paths : seen action-scene combination split list, unseen action-scene combination split list')
+    parser.add_argument('--nb_knn', default=[10, 20], nargs='+', type=int,
+        help='Number of NN to use. 20 is usually working the best.')
+
     parser.add_argument('--epochs', default=30, type=int)
     parser.add_argument('--update_freq', default=1, type=int)
     parser.add_argument('--save_ckpt_freq', default=100, type=int)
-    parser.add_argument('--anno_path', default=[], nargs='+', type=str,
-        help='Need 2 paths : seen action-scene combination split list, unseen action-scene combination split list')
-    
-    #FG_mask
-    parser.add_argument('--mask_model', default='', choices=['FAME','Segformer'], type=str)
-    parser.add_argument('--beta', type=float, default= 0.5,help='FAME foreground region ratio.')
-    parser.add_argument('--prob_aug', type=float, default= 0.5)
-    parser.add_argument('--mask_distill_loss_weight', type=float, default= 1)
-    parser.add_argument('--mask_prediction_loss_weight', type=float, default= 3)
 
-    #DISENTANGLE
-    parser.add_argument('--disentangle_criterion', default='', choices=['UNIFORM','ADVERSARIAL','GRL'], type=str)
-    parser.add_argument('--attn_criterion', default='MSE', choices=['MSE','KL', 'CE'], type=str)
-    parser.add_argument('--scene_criterion', default='KL', choices=['KL', 'CE'], type=str)
-    
-    parser.add_argument('--use_adapter', action='store_true', default=False)
-    parser.add_argument('--subset', action='store_true', default=False)
-    parser.add_argument('--nb_knn', default=[10, 20], nargs='+', type=int,
-        help='Number of NN to use. 20 is usually working the best.')
-    
     # Aggregation parameters
     parser.add_argument('--num_latents', type=int, default= 4)
-    parser.add_argument('--weights_tie', default=False, action='store_true')
+    parser.add_argument('--agg_weights_tie', default=False, action='store_true')
     parser.add_argument('--agg_depth', type=int, default= 4)
     # aggregation lr scale
     parser.add_argument('--agg_block_scale', type=float, default= 0.8)
@@ -72,12 +57,9 @@ def get_args():
     parser.add_argument('--model', default='slot_vit_base_patch16_224', type=str, metavar='MODEL',
                         help='Name of model to train')
     parser.add_argument('--tubelet_size', type=int, default= 2)
-    # aggregation에서 query softmax후 key도 softmax로 norm, defualt는 l1 norm임 
-    parser.add_argument('--key_softmax', type=int, default=-1)
-    parser.add_argument('--no_label', action='store_true', default=False)
-    #scene, action head type
+
     parser.add_argument('--head_type', type=str, default= 'linear')
-    parser.add_argument('--fusion', type=str, default= 'hard_select',choices=['hard_select','attention', 'weightedsum','matching','matching_hard'])
+    parser.add_argument('--slot_matching_method', type=str, default= 'matching', choices=['hard_select', 'matching'])
     parser.add_argument('--input_size', default=224, type=int,
                         help='videos input size')
 
@@ -89,12 +71,16 @@ def get_args():
                         help='Attention dropout rate (default: 0.)')
     parser.add_argument('--drop_path', type=float, default=0.1, metavar='PCT',
                         help='Drop path rate (default: 0.1)')
-    parser.add_argument('--slicing', action='store_true', default=False)
-    parser.add_argument('--residual', action='store_true', default=False)
     parser.add_argument('--disable_eval_during_finetuning', action='store_true', default=False)
     parser.add_argument('--model_ema', action='store_true', default=False)
     parser.add_argument('--model_ema_decay', type=float, default=0.9999, help='')
     parser.add_argument('--model_ema_force_cpu', action='store_true', default=False, help='')
+
+    parser.add_argument('--mask_model', default='', choices=['FAME','Segformer'], type=str)
+    parser.add_argument('--beta', type=float, default= 0.5,help='FAME foreground region ratio.')
+    parser.add_argument('--prob_aug', type=float, default= 0.5)
+    parser.add_argument('--mask_distill_loss_weight', type=float, default= 1)
+    parser.add_argument('--mask_prediction_loss_weight', type=float, default= 3)
 
     # Optimizer parameters
     parser.add_argument('--opt', default='adamw', type=str, metavar='OPTIMIZER',
@@ -176,9 +162,6 @@ def get_args():
     parser.add_argument('--init_scale', default=0.001, type=float)
     parser.add_argument('--use_checkpoint', action='store_true')
     parser.set_defaults(use_checkpoint=False)
-    parser.add_argument('--use_mean_pooling', action='store_true')
-    parser.set_defaults(use_mean_pooling=True)
-    parser.add_argument('--use_cls', action='store_false', dest='use_mean_pooling')
 
     # Dataset parameters
     parser.add_argument('--data_path', default='/path/to/list_kinetics-400', type=str,
@@ -194,8 +177,6 @@ def get_args():
     parser.add_argument('--sampling_rate', type=int, default= 4)
     parser.add_argument('--data_set', default='HVU-EVAL', choices=['HVU-EVAL', 'HVU'],
                         type=str, help='dataset')
-    parser.add_argument('--hat_split', default='1', choices=['1', '2', '3'], type=str)
-    parser.add_argument('--hat_eval', action='store_true', help='test on HAT three splits at once')
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
     parser.add_argument('--log_dir', default=None,
@@ -260,7 +241,6 @@ def main(args, ds_init):
         utils.create_ds_config(args)
 
     print(args)
-    print(args.finetune)
 
     device = torch.device(args.device)
 
@@ -306,11 +286,9 @@ def main(args, ds_init):
         use_checkpoint=args.use_checkpoint,
         init_scale=args.init_scale,
         num_latents=args.num_latents,
-        residual = args.residual,
         head_type=args.head_type,
-        fusion=args.fusion,
-        disentangle_criterion=args.disentangle_criterion,
-        weights_tie=args.weights_tie,
+        slot_matching_method=args.slot_matching_method,
+        agg_weights_tie=args.agg_weights_tie,
         agg_depth=args.agg_depth,
         num_scene_classes=HVU_NUM_SCENE_CLASSES
     )
@@ -345,7 +323,6 @@ def main(args, ds_init):
         print("model.gradient_accumulation_steps() = %d" % model.gradient_accumulation_steps())
         assert model.gradient_accumulation_steps() == args.update_freq
 
-        
     else:
         if args.distributed:
             model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)

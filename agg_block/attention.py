@@ -91,30 +91,18 @@ class Attention(nn.Module):
         dropout = 0., 
         more_dropout = False, 
         xavier_init = False,
-        key_softmax=-1,
-        qk_scale=None
     ):
         super().__init__()
         inner_dim = dim_head * heads
         context_dim = default(context_dim, query_dim)
         self.query_sfmax_scale =  dim_head ** -0.5
         self.key_softmax = dim_head ** -0.5  
-
-
-        self.attention_axis = 'slot'
-        # self.attention_axis ='naive'
-        
-        print(f'attention_axis : {self.attention_axis}')
-        print(f'query_sfmax_scale : {self.query_sfmax_scale}')
-        print(f'key_sfmax_scale : {self.key_softmax}')
-        print(f'heads : {heads}')
         
         self.heads = heads
         self.to_q = nn.Linear(query_dim, inner_dim, bias=False)
         self.to_k = nn.Linear(context_dim, inner_dim, bias=False)
         self.to_v = nn.Linear(context_dim, inner_dim, bias=False)
         self.attn_holder = nn.Identity()
-        self.key_softmax = key_softmax
         self.attn_matrix_dropout = nn.Dropout(dropout) if more_dropout else nn.Identity()
         self.to_out = nn.Sequential(
             nn.Linear(inner_dim, query_dim),
@@ -129,7 +117,7 @@ class Attention(nn.Module):
         nn.init.xavier_uniform_(self.to_k.weight)
         nn.init.xavier_uniform_(self.to_v.weight)
 
-    def forward(self, x, context = None, mask = None, k_pos = None, q_pos = None):
+    def forward(self, x, context = None, k_pos = None, q_pos = None):
         h = self.heads
 
         q = self.to_q(x if q_pos is None else x + q_pos)
@@ -141,12 +129,7 @@ class Attention(nn.Module):
         
         sim = einsum('b i d, b j d -> b i j', q, k)
         sim = sim * self.query_sfmax_scale
-        if self.attention_axis =='naive':
-            attn = sim.softmax(dim = -1)
-        elif self.attention_axis =='slot':
-            attn = sim.softmax(dim = 1)
-        else:
-            raise ValueError("attention axis error")
+        attn = sim.softmax(dim = 1)     #! slot attention, if you want to apply original attention, set dim=-1
         sim_distill = attn
         attn = self.attn_holder(attn)
         
