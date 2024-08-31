@@ -40,9 +40,9 @@ This codebase was built upon the work of [VideoMAE](https://github.com/MCG-NJU/V
 If you find our code and work useful, please consider citing:
 
 ```bibtex
-@article{bae2023devias,
+@article{bae2024devias,
   title={DEVIAS: Learning Disentangled Video Representations of Action and Scene for Holistic Video Understanding},
   author={Bae, Kyungho and Ahn, Geo and Kim, Youngrae and Choi, Jinwoo},
-  journal={arXiv preprint arXiv:2312.00826},
-  year={2023}
+  journal={European Conference on Computer Vision},
+  year={2024}
 }
