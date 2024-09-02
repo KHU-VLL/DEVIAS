@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <meta name="description" content="Learning Disentangled Video Representations of Action and Scene">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DEVIAS</title>
+
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro|DM+Sans|Manrope|Public+Sans">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.1/css/bulma.min.css">
+  <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css">
+  <link rel="stylesheet" href="./static/css/index.css">
+  <link rel="icon" href="https://pages.cs.wisc.edu/~mucai/vip-logo.webp">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+
+  <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/js/all.min.js"></script>
+  <script type="module" src="https://gradio.s3-us-west-2.amazonaws.com/4.8.0/gradio.js"></script>
+</head>
+
+<style>
+  .expandable-card .card-text-container {
+    max-height: 200px;
+    overflow-y: hidden;
+    position: relative;
+  }
+
+  .expandable-card.expanded .card-text-container {
+    max-height: none;
+  }
+
+  .expand-btn {
+    position: relative;
+    display: none;
+    background-color: rgba(255, 255, 255, 0.8);
+    /* margin-top: -20px; */
+    /* justify-content: center; */
+    color: #510c75;
+    border-color: transparent;
+  }
+
+  .expand-btn:hover {
+    background-color: rgba(200, 200, 200, 0.8);
+    text-decoration: none;
+    border-color: transparent;
+    color: #510c75;
+  }
+
+  .expand-btn:focus {
+    outline: none;
+    text-decoration: none;
+  }
+
+  .expandable-card:not(.expanded) .card-text-container:after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 90px;
+    background: linear-gradient(rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 1));
+  }
+
+  .expandable-card:not(.expanded) .expand-btn {
+    margin-top: -40px;
+  }
+
+  .card-body {
+    padding-bottom: 5px;
+  }
+
+  .vertical-flex-layout {
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .figure-img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .adjustable-font-size {
+    font-size: calc(0.5rem + 2vw);
+  }
+
+  .chat-history {
+    flex-grow: 1;
+    overflow-y: auto;
+    /* overflow-x: hidden; */
+    padding: 5px;
+    border-bottom: 1px solid #ccc;
+    margin-bottom: 10px;
+  }
+
+  #gradio pre {
+    background-color: transparent;
+  }
+
+.author-block a {
+    color: #008AD7;
+    font-weight: normal;
+}
+
+/* Adjust the vertical alignment and font size of the superscript */
+.author-block a sup {
+    vertical-align: baseline;
+    position: relative;
+    top: -0.3em; /* Adjusts the position slightly above the baseline */
+    right: -0.1em; /* Adjusts the position slightly to the right */
+    font-size: smaller; /* Makes the font size smaller if needed */
+}
+
+
+
+</style>
+
+<body>
+  <section class="hero">
+    <div class="hero-body">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column has-text-centered">
+            <h1 class="title is-1 publication-title" style="font-weight: 700;">DEVIAS</h1>
+            <h3 class="title is-3 publication-title" style="font-weight: 400; font-size: x-large; margin-top: -1em; margin-bottom: 2em;">Learning Disentangled Video Representations of Action and Scene</h3>
+            <h5 class="subtitle is-5 publication-awards" style="font-weight: 700; margin-bottom: 2em;">ECCV 2024 Oral Paper 🔥</h5>
+            <div class="is-size-5 publication-authors">
+              <!-- <span class="author-block">
+                <a href="https://pages.cs.wisc.edu/~mucai/" style="color:#008AD7;font-weight:noprmal;">Mu Cai^{1}<sup></sup></a>,
+              </span> -->
+
+              <span class="author-block">
+                <a href="https://github.com/Backdrop9019">Kyungho Bae<sup>1</sup></a>,
+              </span>
+            
+              <span class="author-block">
+                <a href="https://github.com/ahnGeo" style="color:#008AD7;font-weight:normal;">Geo Ahn<sup>1</sup></a>,
+              </span>
+              <span class="author-block">
+                <a href="https://youngraekimm.github.io/" style="color:#008AD7;font-weight:normal;">Youngrae Kim<sup>2</sup></a>,
+              </span>
+              <span class="author-block">
+                <a href="https://sites.google.com/site/jchoivision/" style="color:#008AD7;font-weight:normal;">Jinwoo Choi<sup>1*</sup></a>
+              </span>
+            </div>
+
+            <div class="is-size-5 publication-authors">
+              <span class="author-block"><b style="color:#008AD7; font-weight:normal">1. </b> Kyung Hee University</b></span>
+              <span class="author-block"><b style="color:#008AD7; font-weight:normal">2. </b> Korea Advanced Institute of Science and Technology</span>
+              <!-- <span class="author-block"><b style="color:#F2A900; font-weight:normal">&#x25B6 </b>Columbia
+                University</span> -->
+            </div>
+
+            <div class="column has-text-centered">
+              <div class="publication-links">
+                <span class="link-block">
+                  <a href="https://arxiv.org/pdf/2312.00826v2" target="_blank"
+                    class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <i class="ai ai-arxiv"></i>
+                    </span>
+                    <span>arXiv</span>
+                  </a>
+                </span>
+                <span class="link-block">
+                  <a href="https://github.com/KHU-VLL/DEVIAS" target="_blank"
+                    class="external-link button is-normal is-rounded is-dark">
+                    <span class="icon">
+                      <i class="fab fa-github"></i>
+                    </span>
+                    <span>Code</span>
+                  </a>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="hero teaser">
+    <div class="container is-max-desktop">
+      <!-- <div class="hero-body" style="display: flex; justify-content: center; align-items: center;">
+        <img src="./images/teaser_seen_title.png" style="width: 50%; height: 100%; object-fit: cover;">
+        <img src="./images/teaser_unseen_title.png" style="width: 50%; height: 100%; object-fit: cover;"> -->
+        <!-- <img src="./images/teaser/teaser_seen_1.png" style="width: 50%; height: 100%; object-fit: cover;"> -->
+        <!-- <img src="./images/teaser/teaser_unseen_1.png" style="width: 50%; height: 100%; object-fit: cover;"> -->
+      <!-- </div> -->
+      <div class="hero-body" style="display: flex; justify-content: center; align-items: center;">
+        <img src="./images/teaser/teaser_seen.png" style="width: 60%; height: 100%; object-fit: cover;">
+        <img src="./images/teaser/teaser_unseen.png" style="width: 60%; height: 100%; object-fit: cover;">
+      </div>
+
+      <div class="hero-body" style="display: flex; justify-content: center; align-items: center;">
+        <img src="./images/teaser/teaser_seen_2.png" style="width: 60%; height: 100%; object-fit: cover;">
+        <img src="./images/teaser/teaser_unseen_2.png" style="width: 60%; height: 100%; object-fit: cover;">
+        <!-- <video id="teaser" autoplay muted loop playsinline height="100%"> -->
+          <!-- <source src="./images/teaser_seen_video.mp4" -->
+                  <!-- type="video/mp4"> -->
+        <!-- </video> -->
+      </div>
+      <p style="text-align: center; width: 100%; margin-top: -1em; margin-bottom: 0em;">
+        <b>DEVIAS</b> works well across diverse scenarios, including both <i><b>seen</b> and
+        <b>unseen</b> action-scene combinations</i>.
+      </p>
+      <p style="text-align: center; width: 100%; margin-bottom: 3em; font-size: small; font-weight: 100; color:#898787;">
+        <i>Video reference <a href="https://youtu.be/k6vqIRScUTs?si=d0L5uZya4ayc6bn1">[seen]</a> <a href=" https://youtu.be/x8RIixqumUc?si=LfN5_Wm8gvMFNvQJ">[unseen]</a>
+      </i></p>
+    </div>
+  </section>
+  
+
+  <section class="section"  style="background-color:#e4e4e781">
+    <div class="container is-max-desktop">
+      <!-- Abstract. -->
+      <div class="columns is-centered has-text-centered">
+        <div class="column is-six-fifths">
+          <h2 class="title is-3">Abstract</h2>
+          <div class="content has-text-justified">
+            <ul>
+              <li><b>Humans can naturally understand the content of a video by extracting human actions from the surrounding scene context.</b> Even when encountering a previously <b>unseen action-scene combination</b>, humans easily recognize both the action and
+              the scene.</li>
+              <li>Unlike humans, video recognition models often learn <b>scene-biased action representation</b> due to the spurious correlation between actions and scenes
+                in the training data. Although <b>scene-debiased</b> action recognition models might address the issue, they often <b>overlook valuable scene information in the data</b>.</li>
+              <li>We propose to learn <b>DisEntangled VIdeo representations of Action and Scene (DEVIAS)</b>. DEVIAS consists of <b>a Disentangling Encoder (DE) with the slot attention</b>
+                and <b>an Action Mask Decoder (AMD) leverging action masks</b> to help an action slot's learning process. Since slots are complementary to each other in slot attention, learning good action representation by AMD
+                encourages the DE to learn good scene representation as well.</li>
+              
+            </ul>
+  
+          </div>
+        </div>
+      </div>
+        
+    </div>
+  </section>
+
+  <!-- Model Architecture -->
+  <section class="section">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-six-fifths">
+        <!-- <h2 class="title is-3"><img id="painting_icon" width="3%" src="https://cdn-icons-png.flaticon.com/512/3515/3515174.png"> Performance</h2> -->
+        <h2 class="title is-3" style="margin-bottom: 1.5em;">Architecture</h2>
+        <img id="figure" width="80%" src="./images/overview.PNG" style="max-width: 1000px; width: 100%; height: auto; margin-bottom:-3em;">
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+
+      <!-- DE. -->
+      <div class="column">
+        <div class="content">
+          <h2 class="title is-5">Disentangling Encoder</h2>
+          <p>
+            DE leverages slot attention to disentangle and learn action and scene representations separately from entangled features. It employs the Hungarian
+            algorithm to assign an action and a scene slot among multiple encoded slots, using cross-entropy loss as the cost fuction.
+          </p>
+          <img id="figure" width="100%" src="./images/de.png">
+        </div>
+      </div>
+      <!--/ DE. -->
+
+      <!-- AMD -->
+      <div class="column">
+        <h2 class="title is-5">Action Mask Decoder</h2>
+        <p>
+          Given an action slot, AMD learns to predict an action mask. It makes an action slot shoule contain pure action information, not scene
+          or object information. Since slots are complementary to each other, learning good action representation by AMD encourages the DE to learn good scene representation as well.
+        </p>
+          <div class="column content is-centered">
+            <img id="figure" width="85%" src="./images/amd.png" style="display: block; margin: 0 auto;">
+          </div>
+      </div>
+    <!--/ AMD -->
+    </div>
+  </div>
+
+    <div class="container is-max-desktop">
+    <div class="columns is-centered">
+    <div class="column">
+      <div class="content">
+        <h2 class="title is-5">Disentangling Encoder</h2>
+        <p>
+          DE leverages slot attention to disentangle and learn action and scene representations separately from entangled features. It employs the Hungarian
+          algorithm to assign an action and a scene slot among multiple encoded slots, using cross-entropy loss as the cost fuction.
+        </p>
+        <img id="figure" width="100%" src="./images/de.png">
+      </div>
+    </div>
+
+    <div class="column">
+      <h2 class="title is-5">Action Mask Decoder & Attention Guidance</h2>
+      <p>
+        Given an action slot, AMD learns to predict an action mask. We also design the attention guidance loss between an attetion map of the action slot and an action mask. 
+        They make an action slot shoule contain pure action information, not scene or object information. Since slots are complementary to each other, 
+        learning good action representation by AMD encourages the DE to learn good scene representation as well.
+      </p>
+        <div class="column content is-centered">
+          <img id="figure" width="75%" src="./images/mas.png" style="display: block; margin: 0 auto;">
+        </div>
+    </div>
+    </div>
+  </section>
+
+  <p style="margin-top: -2em;">
+  <hr>
+  </p>
+
+  <section class="section">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-six-fifths">
+        <h2 class="title is-3" style="margin-top: -0.5em;">Experiments</h2>
+      </div>
+    </div>
+    <div class="container is-max-desktop">
+    <!-- Grounedtext2img. -->
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <p>
+          DEVIAS learns both disentangled action and scene representation. With disentangled representations, 
+          DEVIAS can understand video <b>regardless of seen or unseen action-scene combinations</b>. To validate this, 
+          <!-- we evaluate our model on various dataset like below. -->
+          we evaluate our model on various datasets; <a href="https://arxiv.org/abs/1212.0402">UCF-101</a>, 
+          <a href="https://arxiv.org/abs/1705.07750">Kinetics-400</a>, <a href="https://arxiv.org/abs/1904.11451">HVU (ECCV 2020)</a>, 
+          <a href="https://arxiv.org/abs/2211.12883">SCUBA (ICCV 2023)</a>, and <a href="https://openreview.net/forum?id=eOnQ2etkxto">HAT (NeurIPS 2022)</a>.
+          <!-- (Note that we use two synthetic datasets, SCUBA and HAT, to evaluate the models on unseen action-scene combination scenarios. These datasets are generated by mixing videos from the original datasets (UCF-101 or Kinetics-400) to create uncorrelated action-scene combinations.) -->
+          We provide some sample images of these datasets below.
+        </p>
+        <img id="figure" width="95%" src="./images/datasets.PNG">
+      </div>
+    </div>
+
+    <!-- Grounedtext2img. -->
+    <div class="columns is-centered is-vcentered">
+      <div class="column is-full-width has-text-centered">
+        <h2 class="title is-5" style="margin-top: 1em;">Performances for both seen and unseen combination scenarios on UCF-101</h2>
+        <p style="text-align: justify; margin-top: -1em;">
+          We report the Top-1 action recognition and the Top-5 scene recognition accuracies(%). 
+          We also report the harmonic mean (H.M.) of the action recognition and scene recognition. 
+          V.C./Sin. denotes the SCUBA VQGAN-CLIP/Sinusoidal; S.O./Rand. denotes the HAT Scene-Only/Random.
+          For the description of each baseline model, please see the <a href="https://arxiv.org/pdf/2312.00826#page=23">paper</a>.
+        </p>
+        <img id="figure" width="80%" src="./images/ucf_table.png">
+
+        <h2 class="title is-5" style="margin-top: 2em;">Performances for both seen and unseen combination scenarios on Kinetics-400</h2>
+        <p style="text-align: justify; margin-top: -1em;">
+          We report the Top-1 action recognition and the Top-5 scene recognition accuracies(%). 
+          We also report the harmonic mean (H.M.) of the action recognition and scene recognition. 
+          V.C./Sin. denotes the SCUBA VQGAN-CLIP/Sinusoidal; S.O./Rand. denotes the HAT Scene-Only/Random.
+        </p>
+        <img id="figure" width="80%" src="./images/kinetics_table.png">
+
+        <h2 class="title is-5" style="margin-top: 2em;">Disentangled action and scene representation is beneficial for diverse downstream tasks</h2>
+        <p style="text-align: justify; margin-top: -1em;">
+          For fine-tuning on downstream datasets with diverse characteristics, temporal-biased or scene-biased, DEVIAS uses the concatenation of the action and scene slot as input to the classification head.
+          As a result, DEVIAS shows favorable performances on <a href="https://www.ecva.net/papers/eccv_2018/papers_ECCV/papers/Yingwei_Li_RESOUND_Towards_Action_ECCV_2018_paper.pdf">Diving48</a>, 
+          <a href="https://arxiv.org/pdf/1706.04261v2">Something-Something V2</a>, 
+          <a href="https://arxiv.org/abs/1212.0402">UCF-101</a>, and <a href="https://www.cv-foundation.org/openaccess/content_cvpr_2015/papers/Heilbron_ActivityNet_A_Large-Scale_2015_CVPR_paper.pdf">ActivityNet</a> compared to the baselines.
+          Please see the <a href="https://arxiv.org/pdf/2312.00826#page=29">paper</a> for more details.
+        </p>
+        <img id="figure" width="70%" src="./images/downstream.png">
+
+        <h2 class="title is-5" style="margin-top: 2em;">Ablation study</h2>
+        <p style="text-align: justify; margin-top: -1em;">
+          We provide extensive ablation studies to validate the effect of each component of DEVIAS. 
+          Please see the paper for <a href="https://arxiv.org/pdf/2312.00826#page=14">detail explanations</a> and <a href="https://arxiv.org/pdf/2312.00826#page=31">more studies</a>.
+        </p>
+        <img id="figure" width="80%" src="./images/ablation.png">
+
+      </div>
+    </div>
+</section>
+
+<hr>
+
+<section class="section">
+  <div class="columns is-centered has-text-centered">
+    <div class="column is-six-fifths">
+      <h2 class="title is-3" style="margin-top: -0.5em; margin-bottom: 1em;">Qualitative Results</h2>
+      <p>
+        We demonstrate DEVIAS has <i>disentangled action and scene representation</i> with UMAP and attention map visualization.
+      </p>
+    </div>
+  </div>
+
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column">
+        <div class="content">
+          <h2 class="title is-5">UMAP Visualization</h2>
+          <img id="figure" width="80%" src="./images/umap.png">
+        </div>
+      </div>
+
+      <div class="column">
+        <h2 class="title is-5">Slot Attention Map Visualization</h2>
+          <div class="column content is-centered">
+          <img id="figure" width="100%" src="./images/slot_viz.png">
+          </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+  <section class="section" id="BibTeX">
+    <div class="container is-max-desktop content">
+      <h2 class="title" style="margin-top: -1em;">BibTeX</h2>
+      <pre><code>
+  @inproceedings{bae2024devias,
+    title       = {DEVIAS: Learning Disentangled Video Representations of Action and Scene for Holistic Video Understanding},
+    author      = {Bae, Kyungho and Ahn, Geo and Kim, Youngrae and Choi, Jinwoo},
+    journal={European Conference on Computer Vision},
+    year={2024}
+  }
+  </code></pre>
+    </div>
+  </section>
+  
+  <section class="section" id="Acknowledgement">
+    <div class="container is-max-desktop content">
+      <!-- <h2 class="title">Acknowledgement</h2> -->
+      <p>
+        This website is adapted from <a
+        href="https://github.com/nerfies/nerfies.github.io">Nerfies</a>, licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-sa/4.0/">Creative
+        Commons Attribution-ShareAlike 4.0 International License</a>. 
+      </p>
+
+      <!-- <p>
+      Related Links: 
+      <a href='https://llava-vl.github.io/'>[LLaVA]</a>  
+      <a href='https://instruction-tuning-with-gpt-4.github.io/'>[Insutrction Tuning with GPT-4]</a>      
+      </p>     -->
+    </div>
+  </section>
+
+  <!-- <script>
+    // Handle message showing
+    function createChatRow(sender, text, imageSrc) {
+      var article = document.createElement("article");
+      article.className = "media"
+
+      var figure = document.createElement("figure");
+      figure.className = "media-left";
+
+      var span = document.createElement("span");
+      span.className = "icon is-large";
+
+      var icon = document.createElement("i");
+      icon.className = "fas fas fa-2x" + (sender === "User" ? " fa-user " : sender === "LLaVA" ? " fa-robot" : "");
+
+      var media = document.createElement("div");
+      media.className = "media-content";
+
+      var content = document.createElement("div");
+      content.className = "content";
+
+      var para = document.createElement("p");
+
+      // wrap text in pre tag to preserve whitespace and line breaks
+      var pre_text = document.createElement("pre");
+      pre_text.style = "background-color: white; font-size: 18px; font-family: Arial; padding: 0; margin: 0; white-space: pre-wrap; word-wrap: break-word;";
+      var paraText = document.createTextNode(text);
+      pre_text.appendChild(paraText);
+
+      var strong = document.createElement("strong");
+      strong.innerHTML = sender;
+      var br = document.createElement("br");
+
+      para.appendChild(strong);
+      para.appendChild(br);
+      para.appendChild(pre_text);
+
+      // Add image if imageSrc is provided
+      if (imageSrc) {
+        var img = document.createElement("img");
+        img.src = imageSrc;
+        img.style = "max-width: 100%; max-height: 300px;"; // Adjust the style as needed
+        para.appendChild(img);
+      }
+
+      content.appendChild(para);
+      media.appendChild(content);
+      span.appendChild(icon);
+      figure.appendChild(span);
+      if (sender !== "Description") {
+        article.appendChild(figure);
+      };
+      article.appendChild(media);
+      return article;
+    }
+
+    function addMessageToChatHistory(sender, message, imageSrc) {
+      const chatHistory = document.querySelector('.chat-history');
+      const chatRow = createChatRow(sender, message, imageSrc);
+      chatHistory.appendChild(chatRow);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function clearChatHistory() {
+      const chatHistory = document.querySelector('.chat-history');
+      chatHistory.innerHTML = "";
+    }
+
+    // 
+    const conversations = [
+      {
+        "description": "monalisa",
+        "turns": [
+          // ["Description", "Please read the description and answer the question."],
+          ["User", "", "/static/images/monalisa.jpg"],
+          ["User", "Do you know who drew this painting?​"],
+          ["LLaVA",
+            "The painting depicts a woman, commonly believed to be Mona Lisa, the famous artwork by Leonardo da Vinci. " +
+            "It is a portrait painting that showcases the woman's enigmatic smile and has become one of the most famous and iconic art pieces in the world. " +
+            "The original work is displayed in the Louvre Museum in Paris, and it is known for its intricate details, use of oil paint, and the artist's innovative techniques that contributed to its enduring appeal and mystery.​​"
+          ]
+        ]
+      },
+      {
+        "description": "monalisa with dog head",
+        "turns": [
+          ["User", "", "/static/images/monalisa-fun.jpg"],
+          ["User", "Do you know who drew this painting?​"],
+          ["LLaVA", "The painting depicts a dog in a humorous situation, where it appears to be wearing a woman's dress and standing in front of a landscape. Although the artist of the painting is not explicitly identified, it could be a reference to the famous artist Da Vinci, known for his artistic works, including the Mona Lisa. The painting is likely a creative and comical take on the traditional portrait style, replacing a human figure with a dog dressed in a woman's clothing, making it an interesting and amusing visual piece.​"]
+        ]
+      },
+      {
+        "description": "Titanic Rose and Jack",
+        "turns": [
+          ["User", "", "/static/images/titanic.jpg"],
+          ["User", "What's the ending of this movie?​​"],
+          ["LLaVA", "​In the image, a young woman is leaning on a man in front of a beautiful sunset, with both of them standing on a boat. They appear to be enjoying a romantic moment together. The scene suggests that they could be depicted as the characters Jack and Rose from the popular movie Titanic. In the movie, their romance blossoms aboard the fictional ocean liner Titanic, with the pair ultimately sharing a passionate kiss as the ship sinks into the ocean. The ending of the movie is known for its emotional and heartfelt scenes, where the characters are forced to say goodbye to each other as they are separated by the sinking ship. The image evokes a sense of romance and nostalgia, paying tribute to the iconic love story portrayed in the movie Titanic.​"]
+        ]
+      },
+      {
+        "description": "Fridge",
+        "turns": [
+          ["User", "", "/static/images/fridge.jpg"],
+          ["User", "What are the meals that I can cook with these?​​"],
+          ["LLaVA", "With the variety of food items stored in the refrigerator, you can prepare several meals. For example, you can create a fruit salad using the strawberries, blueberries, and carrots. Additionally, you can make a delicious smoothie using the fruits and vegetables, which would be a healthy and nutritious snack or breakfast option. The milk and eggs can be used to create various dishes, such as a milk-based smoothie, a baked casserole, or scrambled eggs. The juice can also be used to make a fresh fruit and juice mix or as a refreshing homemade popsicle. The possibilities are vast, and the meals you can create will depend on your preferences and dietary needs.​​"],
+          ["User", "I would like to do the fruit salad.  Show me the recipe.​"],
+          ["LLaVA",
+            `Certainly! Here's a simple fruit salad recipe using the items in your refrigerator:​
+
+Ingredients:​
+- 2 cups fresh strawberries, sliced​
+- 1 cup fresh blueberries​
+- 1 large carrot, grated​
+- Juice of half a lemon​
+- A handful of chopped fresh parsley or mint​
+- A few ice cubes​
+- Optional: honey or maple syrup (adjust to taste)​
+
+Instructions:​
+1. In a large bowl, combine the sliced strawberries, blueberries, and carrot. Gently toss them together to mix.​
+2. Drizzle the juice of half a lemon over the fruit and vegetables to prevent them from oxidizing and add a refreshing citrus flavor.​
+3. Sprinkle the chopped fresh parsley or mint over the fruit and gently toss once more.​
+4. If desired, add a drizzle of honey or maple syrup for a touch of sweetness. Adjust the amount according to your taste preferences.​
+5. Cover the bowl and refrigerate the fruit salad for at least 30 minutes or up to a few hours. This allows the flavors to meld and creates a more refreshing salad.​
+6. Serve the fruit salad in cups or bowls, garnished with a sprinkle of fresh parsley or mint, if desired.​
+
+This fruit salad recipe is perfect for a healthy snack or side dish, and with the variety of ingredients available in your refrigerator, it should be easy to put together quickly.`]]
+      },
+      {
+        "description": "Beautiful View",
+        "turns": [
+          ["User", "", "/static/images/view.jpg"],
+          ["User", "What are the things I should be cautious about when I visit here?​​"],
+          ["LLaVA", "When visiting this peaceful location with a pier extending over a serene lake, surrounded by mountains, there are several things to be cautious about. First, pay attention to the weather conditions, as sudden changes in weather, especially strong winds or storms, can cause the water to become rough and pose risks to the stability of the pier. Second, be mindful of the structural integrity of the pier; avoid overloading it with too many people or excessive weight, as this could potentially damage the pier or cause it to collapse. Additionally, be aware of the surrounding wildlife and respect their space; do not harm or disturb them in any way. Finally, if you decide to go fishing, ensure that you adhere to any local fishing regulations and use appropriate fishing techniques to keep the lake ecosystem healthy and maintain the balance of the food chain.​​"],
+          ["User", "Compose an engaging travel blog post about my trip to this place, highlighting the beautiful sceneries, joyful experiences, and include possible anecdotes.​​"],
+          ["LLaVA",
+            `Traveling to this picturesque location with a serene lake and mountains in the background was a refreshing and rejuvenating experience. The pier extending over the calm water provided an excellent vantage point from which to appreciate the breathtaking scenery. As I stood on the pier, I couldn't help but feel a deep connection with nature, taking a moment to soak in the peaceful atmosphere.​
+
+One of the highlights of my trip was undoubtedly the fishing experience. The area is teeming with life, and I was thrilled to land a sizeable catch, despite the modest size of the lake. The joy of fishing in such a beautiful setting was truly rewarding, and it allowed me to take a break from my busy life and truly immerse myself in the tranquility of nature.​
+
+While exploring the surrounding area, I came across a family of birds that had built a nest close to the pier, adding to the charm of the location. Interacting with the wildlife and observing their behavior was an enriching experience that I'll cherish for years to come.​
+
+In conclusion, this idyllic destination provided me with an opportunity to unwind and recharge, surrounded by mesmerizing natural beauty and the gentle sounds of water and wildlife. If you're looking for a serene escape from the hustle and bustle of everyday life, this pier overlooking the lake is the perfect place to find solace and reconnect with nature.`
+          ]
+        ]
+      },
+    ];
+
+    // The current image index
+    let currentIndex = 0;
+
+    // The function to update the displayed chat history
+    function update_dialog_demo() {
+      // Clear the chat history
+      clearChatHistory();
+
+      for (let i = 0; i < conversations[currentIndex].turns.length; i++) {
+        if (conversations[currentIndex].turns[i].length == 2) {
+          addMessageToChatHistory(conversations[currentIndex].turns[i][0], conversations[currentIndex].turns[i][1]);
+        }
+        else {
+          addMessageToChatHistory(conversations[currentIndex].turns[i][0], conversations[currentIndex].turns[i][1], conversations[currentIndex].turns[i][2]);
+        }
+      }
+
+      // scroll to the top of the chat history
+      document.querySelector('.chat-history').scrollTop = 0;
+    }
+
+    // Initialize the displayed image
+    update_dialog_demo();
+
+    // Event listeners for the buttons
+    document.getElementById('prev-question').addEventListener('click', () => {
+      currentIndex = (currentIndex - 1 + conversations.length) % conversations.length;
+      update_dialog_demo();
+    });
+
+    document.getElementById('next-question').addEventListener('click', () => {
+      currentIndex = (currentIndex + 1) % conversations.length;
+      update_dialog_demo();
+    });
+
+
+  </script> -->
+
+</body>
+
+</html>
