@@ -23,7 +23,7 @@ Please download the datasets to replicate the results of this project. For the d
 
 ## Training
 The instruction for training is in [TRAIN.md](docs/TRAIN.md).  
-We also provide the model checkpoints of our DEVIAS trained on UCF-101 and Kinetics-400, and the scene model trained on Places-365 used to generate pseudo scene label. [Drive](https://drive.google.com/drive/folders/1khvhRQ3rDHEm9k8Q5EXxHulU-1HrLzUu?usp=drive_link)
+We also provide the checkpoints of our DEVIAS trained on UCF-101 and Kinetics-400, and the scene model trained on Places-365 used to generate pseudo scene label. Please see the [Drive](https://drive.google.com/drive/folders/1khvhRQ3rDHEm9k8Q5EXxHulU-1HrLzUu?usp=drive_link)
 
 ## Evaluation
 We evaluate DEVIAS based on **action** and **scene** recognition performances across both **seen** and **unseen** action-scene combination scenarios.
