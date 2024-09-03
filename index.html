@@ -137,17 +137,17 @@
               </span> -->
 
               <span class="author-block">
-                <a href="https://github.com/Backdrop9019">Kyungho Bae<sup>1</sup></a>,
+                <a href="https://github.com/Backdrop9019">Kyungho Bae<sup>1*</sup></a>,
               </span>
             
               <span class="author-block">
-                <a href="https://github.com/ahnGeo" style="color:#008AD7;font-weight:normal;">Geo Ahn<sup>1</sup></a>,
+                <a href="https://github.com/ahnGeo" style="color:#008AD7;font-weight:normal;">Geo Ahn<sup>1*</sup></a>,
               </span>
               <span class="author-block">
-                <a href="https://youngraekimm.github.io/" style="color:#008AD7;font-weight:normal;">Youngrae Kim<sup>2</sup></a>,
+                <a href="https://youngraekimm.github.io/" style="color:#008AD7;font-weight:normal;">Youngrae Kim<sup>2*</sup></a>,
               </span>
               <span class="author-block">
-                <a href="https://sites.google.com/site/jchoivision/" style="color:#008AD7;font-weight:normal;">Jinwoo Choi<sup>1*</sup></a>
+                <a href="https://sites.google.com/site/jchoivision/" style="color:#008AD7;font-weight:normal;">Jinwoo Choi<sup>1†</sup></a>
               </span>
             </div>
 
@@ -157,6 +157,7 @@
               <!-- <span class="author-block"><b style="color:#F2A900; font-weight:normal">&#x25B6 </b>Columbia
                 University</span> -->
             </div>
+            <p style="font-weight: 100; color:#898787;">∗ Equally contributed first authors. † Corresponding author.</p>
 
             <div class="column has-text-centered">
               <div class="publication-links">
@@ -195,18 +196,18 @@
         <!-- <img src="./images/teaser/teaser_unseen_1.png" style="width: 50%; height: 100%; object-fit: cover;"> -->
       <!-- </div> -->
       <div class="hero-body" style="display: flex; justify-content: center; align-items: center;">
-        <img src="./images/teaser/teaser_seen.png" style="width: 60%; height: 100%; object-fit: cover;">
-        <img src="./images/teaser/teaser_unseen.png" style="width: 60%; height: 100%; object-fit: cover;">
+        <img src="./images/teaser/teaser_seen_4.png" style="width: 60%; height: 100%; object-fit: cover;">
+        <img src="./images/teaser/teaser_unseen_4.png" style="width: 60%; height: 100%; object-fit: cover;">
       </div>
 
-      <div class="hero-body" style="display: flex; justify-content: center; align-items: center;">
-        <img src="./images/teaser/teaser_seen_2.png" style="width: 60%; height: 100%; object-fit: cover;">
-        <img src="./images/teaser/teaser_unseen_2.png" style="width: 60%; height: 100%; object-fit: cover;">
+      <!-- <div class="hero-body" style="display: flex; justify-content: center; align-items: center;"> -->
+        <!-- <img src="./images/teaser/teaser_seen_2.png" style="width: 60%; height: 100%; object-fit: cover;"> -->
+        <!-- <img src="./images/teaser/teaser_unseen_2.png" style="width: 60%; height: 100%; object-fit: cover;"> -->
         <!-- <video id="teaser" autoplay muted loop playsinline height="100%"> -->
           <!-- <source src="./images/teaser_seen_video.mp4" -->
                   <!-- type="video/mp4"> -->
         <!-- </video> -->
-      </div>
+      <!-- </div> -->
       <p style="text-align: center; width: 100%; margin-top: -1em; margin-bottom: 0em;">
         <b>DEVIAS</b> works well across diverse scenarios, including both <i><b>seen</b> and
         <b>unseen</b> action-scene combinations</i>.
@@ -255,24 +256,24 @@
   </section>
 
   <section class="section">
-  <div class="container is-max-desktop">
-    <div class="columns is-centered">
+  <!-- <div class="container is-max-desktop"> -->
+    <!-- <div class="columns is-centered"> -->
 
       <!-- DE. -->
-      <div class="column">
-        <div class="content">
-          <h2 class="title is-5">Disentangling Encoder</h2>
-          <p>
-            DE leverages slot attention to disentangle and learn action and scene representations separately from entangled features. It employs the Hungarian
-            algorithm to assign an action and a scene slot among multiple encoded slots, using cross-entropy loss as the cost fuction.
-          </p>
-          <img id="figure" width="100%" src="./images/de.png">
-        </div>
-      </div>
+      <!-- <div class="column"> -->
+        <!-- <div class="content"> -->
+          <!-- <h2 class="title is-5">Disentangling Encoder</h2> -->
+          <!-- <p> -->
+            <!-- DE leverages slot attention to disentangle and learn action and scene representations separately from entangled features. It employs the Hungarian -->
+            <!-- algorithm to assign an action and a scene slot among multiple encoded slots, using cross-entropy loss as the cost fuction. -->
+          <!-- </p> -->
+          <!-- <img id="figure" width="100%" src="./images/de.png"> -->
+        <!-- </div> -->
+      <!-- </div> -->
       <!--/ DE. -->
 
       <!-- AMD -->
-      <div class="column">
+      <!-- <div class="column">
         <h2 class="title is-5">Action Mask Decoder</h2>
         <p>
           Given an action slot, AMD learns to predict an action mask. It makes an action slot shoule contain pure action information, not scene
@@ -281,10 +282,10 @@
           <div class="column content is-centered">
             <img id="figure" width="85%" src="./images/amd.png" style="display: block; margin: 0 auto;">
           </div>
-      </div>
+      </div> -->
     <!--/ AMD -->
-    </div>
-  </div>
+    <!-- </div> -->
+  <!-- </div> -->
 
     <div class="container is-max-desktop">
     <div class="columns is-centered">
@@ -292,7 +293,7 @@
       <div class="content">
         <h2 class="title is-5">Disentangling Encoder</h2>
         <p>
-          DE leverages slot attention to disentangle and learn action and scene representations separately from entangled features. It employs the Hungarian
+          Disentangling Encoder (DE) leverages slot attention to disentangle and learn action and scene representations separately from entangled features. It employs the Hungarian
           algorithm to assign an action and a scene slot among multiple encoded slots, using cross-entropy loss as the cost fuction.
         </p>
         <img id="figure" width="100%" src="./images/de.png">
@@ -302,12 +303,12 @@
     <div class="column">
       <h2 class="title is-5">Action Mask Decoder & Attention Guidance</h2>
       <p>
-        Given an action slot, AMD learns to predict an action mask. We also design the attention guidance loss between an attetion map of the action slot and an action mask. 
+        Given an action slot, Action Mask Decoder (AMD) learns to predict an action mask. We also design the Attention Guidance (AG) loss between an attetion map of the action slot and an action mask. 
         They make an action slot shoule contain pure action information, not scene or object information. Since slots are complementary to each other, 
-        learning good action representation by AMD encourages the DE to learn good scene representation as well.
+        learning good action representation by AMD and AG encourages the DE to learn good scene representation as well.
       </p>
         <div class="column content is-centered">
-          <img id="figure" width="75%" src="./images/mas.png" style="display: block; margin: 0 auto;">
+          <img id="figure" width="75%" src="./images/mas.png" style="display: block; margin: 0 3em;">
         </div>
     </div>
     </div>
