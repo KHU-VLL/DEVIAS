@@ -43,7 +43,8 @@ If you find our code and work useful, please consider citing:
 ```bibtex
 @article{bae2024devias,
   title={DEVIAS: Learning Disentangled Video Representations of Action and Scene for Holistic Video Understanding},
-  author={Kyungho Bae, Geo Ahn, Youngrae Kim and Jinwoo Choi},
+  author={Bae, Kyungho and Ahn, Geo and Kim, Youngrae and Choi, Jinwoo},
   journal={European Conference on Computer Vision},
   year={2024}
 }
+  <!-- author={Kyungho Bae, Geo Ahn, Youngrae Kim and Jinwoo Choi}, -->
