@@ -4,8 +4,8 @@
 
 This repository is the official implementation of the paper **"DEVIAS: Learning Disentangled Video Representations of Action and Scene"**, accepted as an **Oral** presentation at ECCV 2024🔥🔥.
 
-## News
-- We are diligently preparing the code and are excited to share it with you soon. Stay tuned for the release soon!
+<!-- ## News -->
+<!-- - We are diligently preparing the code and are excited to share it with you soon. Stay tuned for the release soon! -->
   
 ## Installation
 
@@ -22,7 +22,8 @@ The following datasets are used in this project. You can download them via the p
 Please download the datasets to replicate the results of this project. For the detail setting, please see [DATASET.md](docs/DATASET.md).
 
 ## Training
-The instruction for training is in [TRAIN.md](docs/TRAIN.md).
+The instruction for training is in [TRAIN.md](docs/TRAIN.md).  
+We also provide our DEVIAS weights trained on UCF-101 and Kinetics-400, and the scene model trained on Places-365 used to generate pseudo scene label. [Drive](https://drive.google.com/drive/folders/1khvhRQ3rDHEm9k8Q5EXxHulU-1HrLzUu?usp=drive_link)
 
 ## Evaluation
 We evaluate DEVIAS based on **action** and **scene** recognition performances across both **seen** and **unseen** action-scene combination scenarios.
