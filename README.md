@@ -3,7 +3,7 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2312.00826-red)](https://arxiv.org/abs/2312.00826)
 
 This repository is the official implementation of the paper **"DEVIAS: Learning Disentangled Video Representations of Action and Scene"**, accepted as an **Oral** presentation at ECCV 2024🔥🔥.  
-[Project page](https://khu-vll.github.io/DEVIAS/)
+[[Project page]](https://khu-vll.github.io/DEVIAS/)
 
 <!-- ## News -->
 <!-- - We are diligently preparing the code and are excited to share it with you soon. Stay tuned for the release soon! -->
