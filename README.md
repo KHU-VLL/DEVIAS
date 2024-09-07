@@ -48,4 +48,3 @@ If you find our code and work useful, please consider citing:
   journal={European Conference on Computer Vision},
   year={2024}
 }
-  <!-- author={Kyungho Bae, Geo Ahn, Youngrae Kim and Jinwoo Choi}, -->
