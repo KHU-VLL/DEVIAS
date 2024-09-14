@@ -2,10 +2,10 @@ import torch
 import os
 import torch.distributed as dist
 
-from datasets import knn_build_dataset
-import utils
+from dataset.datasets import knn_build_dataset
+import utils.utils as utils
 import torch.nn as nn
-from kinetics import VideoClsDataset
+from dataset.kinetics import VideoClsDataset
 
 
 class ReturnIndexVideoClsDataset(VideoClsDataset):

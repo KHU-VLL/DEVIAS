@@ -11,18 +11,18 @@ from pathlib import Path
 from collections import OrderedDict
 import random
 
-from mixup import Mixup
+from utils.transform.mixup import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+from utils.optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
 
-from datasets import build_dataset
-from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
-from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import multiple_samples_collate
-import utils
-import modeling_slot_fusion
+from dataset.datasets import build_dataset
+from engine.engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
+from utils.utils import NativeScalerWithGradNormCount as NativeScaler
+from utils.utils import multiple_samples_collate
+import utils.utils as utils
+import model.modeling_slot_fusion as modeling_slot_fusion
 
 
 def print_requires_grad_parameters(model):

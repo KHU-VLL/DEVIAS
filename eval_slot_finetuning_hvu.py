@@ -5,20 +5,20 @@ import torch.backends.cudnn as cudnn
 import os
 from pathlib import Path
 
-from mixup import Mixup
+from utils.transform.mixup import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+from utils.optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
 import torch.distributed as dist
 from scipy.optimize import linear_sum_assignment
-from hvu import VideoClsDataset_HVU
+from dataset.hvu import VideoClsDataset_HVU
 
-from datasets import build_dataset
-from engine_for_slot_hvu import validation_action, validation_scene
-from utils import NativeScalerWithGradNormCount as NativeScaler
-import utils
-import modeling_slot
+from dataset.datasets import build_dataset
+from engine.engine_for_slot_hvu import validation_action, validation_scene
+from utils.utils import NativeScalerWithGradNormCount as NativeScaler
+import utils.utils as utils
+import model.modeling_slot as modeling_slot
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
