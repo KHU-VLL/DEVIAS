@@ -12,25 +12,25 @@ from functools import partial
 from pathlib import Path
 from collections import OrderedDict
 
-from mixup import Mixup
+from utils.transform.mixup import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from scipy.optimize import linear_sum_assignment
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+from utils.optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
 
-from datasets import build_dataset
-from engine_for_slot_hvu import train_one_epoch, validation_one_epoch
-from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate
-import utils
-import modeling_slot
+from dataset.datasets import build_dataset
+from engine.engine_for_slot_hvu import train_one_epoch, validation_one_epoch
+from utils.utils import NativeScalerWithGradNormCount as NativeScaler
+from utils.utils import  multiple_samples_collate
+import utils.utils as utils
+import model.modeling_slot as modeling_slot
 import random
-from train_loss import TrainLoss
+from utils.loss.train_loss import TrainLoss
 
 from einops import reduce
-from fame_hvu import FAME
-from hvu_train_loss import TrainLoss
+from utils.transform.fame_hvu import FAME
+from utils.loss.hvu_train_loss import TrainLoss
 
 HVU_NUM_ACTION_CLASSES = 739
 HVU_NUM_SCENE_CLASSES = 248

@@ -7,15 +7,15 @@ import torchvision.transforms.functional as F
 from PIL import Image
 from torchvision import transforms
 
-from rand_augment import rand_augment_transform
-from random_erasing import RandomErasing
+from .rand_augment import rand_augment_transform
+from .random_erasing import RandomErasing
 
 
 import numbers
 import PIL
 import torchvision
 
-import functional as FF
+import utils.functional as FF
 
 _pil_interpolation_to_str = {
     Image.NEAREST: "PIL.Image.NEAREST",

@@ -11,18 +11,18 @@ from pathlib import Path
 from collections import OrderedDict
 import random
 
-from mixup import Mixup
+from utils.transform.mixup import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+from utils.optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
 
-from datasets import build_dataset
-from engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
-from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate
-import utils
-import modeling_finetune
+from dataset.datasets import build_dataset
+from engine.engine_for_finetuning import train_one_epoch, validation_one_epoch, final_test, merge
+from utils.utils import NativeScalerWithGradNormCount as NativeScaler
+from utils.utils import  multiple_samples_collate
+import utils.utils as utils
+import model.modeling_finetune as modeling_finetune
 
 
 def print_requires_grad_parameters(model):
@@ -494,12 +494,12 @@ def main(args, ds_init):
         optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
 
     if args.hat_eval :
-        from hat_eval import hat_eval
+        from utils.eval.hat_eval import hat_eval
         hat_eval(args, model, final_test, merge)
         exit(0)
     
     if args.run_scuba :
-        from run_scuba import run_scuba
+        from utils.eval.run_scuba import run_scuba
         run_scuba(model, args, final_test, merge)
         exit(0)
     

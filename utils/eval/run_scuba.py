@@ -1,6 +1,6 @@
 import torch
-import utils
-from datasets import build_dataset
+import utils.utils as utils
+from dataset.datasets import build_dataset
 import os
 import json
 

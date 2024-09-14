@@ -11,19 +11,19 @@ from pathlib import Path
 from collections import OrderedDict
 import random
 
-from mixup import Mixup
+from utils.transform.mixup import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+from utils.optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
 
-from datasets import build_dataset
-from engine_for_multi_task import train_one_epoch, validation_one_epoch, final_test, merge, final_test_with_scene_label
-from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate
-import utils
-import modeling_multi_task
-import modeling_finetune
+from dataset.datasets import build_dataset
+from engine.engine_for_multi_task import train_one_epoch, validation_one_epoch, final_test, merge, final_test_with_scene_label
+from utils.utils import NativeScalerWithGradNormCount as NativeScaler
+from utils.utils import  multiple_samples_collate
+import utils.utils as utils
+import model.modeling_multi_task as modeling_multi_task
+import model.modeling_finetune as modeling_finetune
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -581,7 +581,7 @@ def main(args, ds_init):
         optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
 
     if args.hat_eval :
-        from hat_eval import hat_eval
+        from utils.eval.hat_eval import hat_eval
         if args.eval_scene :
             print('usebglabel'*10)
             hat_eval(args, model, final_test_with_scene_label, merge, scene_model=scene_model)
@@ -590,7 +590,7 @@ def main(args, ds_init):
         exit(0)
         
     if args.run_scuba :
-        from run_scuba import run_scuba
+        from utils.eval.run_scuba import run_scuba
         run_scuba(model, args, final_test, merge, final_test_with_scene_label, scene_model)
         exit(0)
 
@@ -615,7 +615,7 @@ def main(args, ds_init):
         
     if args.run_knn:
         model = model.float()
-        from run_knn import run_knn
+        from utils.eval.run_knn import run_knn
         run_knn(model, args)
         exit(0)
         

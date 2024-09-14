@@ -1,18 +1,16 @@
 import os
 from torchvision import transforms
-from kinetics import VideoClsDataset
-from ssv2 import SSVideoClsDataset
+from .kinetics import VideoClsDataset
+from .ssv2 import SSVideoClsDataset
 from torchvision import transforms
 from torch.utils.data import Dataset
 from PIL import Image
 import csv
-import volume_transforms as volume_transforms
 import torch.nn.functional as F
 
-import video_transforms as video_transforms 
-from hat_decode import VideoHATDataset
-from hvu import VideoClsDataset_HVU
-from activitynet import VideoClsDataset_ActivityNet
+from .hat_decode import VideoHATDataset
+from .hvu import VideoClsDataset_HVU
+from .activitynet import VideoClsDataset_ActivityNet
 
 def is_directory_exists(path):
     return os.path.exists(path) and os.path.isdir(path)

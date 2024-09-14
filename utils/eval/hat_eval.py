@@ -1,7 +1,7 @@
 import torch
 import os
-from datasets import build_dataset
-import utils
+from dataset.datasets import build_dataset
+import utils.utils as utils
 import json
 
 
@@ -75,5 +75,5 @@ def hat_eval(args, model, test_func, merge_func, scene_model=None) :
     
     torch.distributed.barrier()
     if global_rank == 0:
-        from count_hat_acc import count_hat_acc
+        from .count_hat_acc import count_hat_acc
         print(count_hat_acc(dir=os.path.join(hat_output_dir, hat_ver), split_dir=['1', '2', '3'], topk=1))

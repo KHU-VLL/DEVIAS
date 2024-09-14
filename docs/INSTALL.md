@@ -28,3 +28,5 @@ To run our code, you need to install :
 - scikit-learn
 
 - transformers
+
+- kornia

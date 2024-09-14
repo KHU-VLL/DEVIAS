@@ -10,24 +10,24 @@ from functools import partial
 from pathlib import Path
 from collections import OrderedDict
 
-from mixup import Mixup
+from utils.transform.mixup import Mixup
 from timm.models import create_model
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
-from optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
+from utils.optim_factory import create_optimizer, get_parameter_groups, LayerDecayValueAssigner
 
-from datasets import build_dataset
-from engine_for_slot import train_one_epoch, validation_one_epoch, final_test, merge, final_test_with_scene_label
-from utils import NativeScalerWithGradNormCount as NativeScaler
-from utils import  multiple_samples_collate
-import utils
-import modeling_slot
-import modeling_finetune
+from dataset.datasets import build_dataset
+from engine.engine_for_slot import train_one_epoch, validation_one_epoch, final_test, merge, final_test_with_scene_label
+from utils.utils import NativeScalerWithGradNormCount as NativeScaler
+from utils.utils import  multiple_samples_collate
+import utils.utils as utils
+import model.modeling_slot as modeling_slot
+import model.modeling_finetune as modeling_finetune
 import random
 
-from train_loss import TrainLoss
-from run_scuba import run_scuba
-from run_knn import run_knn
+from utils.loss.train_loss import TrainLoss
+from utils.eval.run_scuba import run_scuba
+from utils.eval.run_knn import run_knn
 
 def print_requires_grad_parameters(model):
     for name, param in model.named_parameters():
@@ -418,7 +418,7 @@ def main(args, ds_init):
     print_requires_grad_parameters(model)
 
     if args.mask_model == "FAME":
-        from fame import FAME
+        from utils.transform.fame import FAME
         mask_model = FAME(beta=args.beta,prob_aug=args.prob_aug)
     elif args.mask_model == "Segformer":
         from transformers import SegformerForSemanticSegmentation
@@ -603,7 +603,7 @@ def main(args, ds_init):
         optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
 
     if args.hat_eval :
-        from hat_eval import hat_eval
+        from utils.eval.hat_eval import hat_eval
         if args.eval_scene :
             print('usebglabel'*10)
             hat_eval(args, model, final_test_with_scene_label, merge, scene_model=scene_model)

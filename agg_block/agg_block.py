@@ -1,8 +1,8 @@
 import torch
 from torch import nn
 from einops import rearrange, repeat
-from agg_block.pos_encoding import build_position_encoding
-from agg_block.attention import *
+from .pos_encoding import build_position_encoding
+from .attention import *
     
     
 class AggregationBlock(nn.Module):
