@@ -195,12 +195,6 @@ class MaskPredictor(nn.Module):
     def __init__(self):
         super(MaskPredictor, self).__init__()
         
-        self.conv1 = nn.Conv2d(770, 256, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(256, 64, kernel_size=3, stride=1, padding=1)
-        self.conv3 = nn.Conv2d(64, 16, kernel_size=3, stride=1, padding=1)
-        self.conv4 = nn.Conv2d(16, 4, kernel_size=3, stride=1, padding=1)
-        self.conv5 = nn.Conv2d(4, 1, kernel_size=3, stride=1, padding=1)
-        
         self.decoder = nn.Sequential(
             nn.Linear(768, 512), 
             nn.ReLU(),
