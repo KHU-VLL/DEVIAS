@@ -5,7 +5,7 @@
 This repository is the official implementation of the paper **"DEVIAS: Learning Disentangled Video Representations of Action and Scene"**, accepted as an **Oral** presentation at ECCV 2024🔥🔥.  
 [[Project page]](https://khu-vll.github.io/DEVIAS/)
 
-<p align="center"><img width="80%" alt="teaser" src="https://github.com/user-attachments/assets/c392729e-aa2b-4d8e-8655-491bcdb2b617"></p>
+<p align="center"><img width="90%" alt="teaser" src="https://github.com/user-attachments/assets/c392729e-aa2b-4d8e-8655-491bcdb2b617"></p>
 
 <!-- ## News -->
 <!-- - We are diligently preparing the code and are excited to share it with you soon. Stay tuned for the release soon! -->
